@@ -110,9 +110,9 @@ namespace UnifiedPhotoBooth
             {
                 if (_isOnline)
                 {
-                    // Пытаемся получить события из Google Drive
+                    // Пытаемся получить только события из папки Events в Google Drive
                     var request = _driveService.Files.List();
-                    request.Q = "mimeType='application/vnd.google-apps.folder' and trashed=false";
+                    request.Q = $"'{EVENTS_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
                     request.Fields = "files(id, name)";
 
                     var result = request.Execute();
@@ -269,67 +269,112 @@ namespace UnifiedPhotoBooth
         // Загрузка файла в Google Drive
         private async Task<UploadResult> UploadFileToGoogleDriveAsync(string filePath, string fileName, string folderName, string eventFolderId, bool isPublic, string universalFolderId)
         {
-            // Оригинальный код загрузки в Google Drive
-            string folderId = universalFolderId;
+            // Создаем идентификатор файла для отслеживания успешной загрузки
+            string fileId = null;
+            string folderId = null;
             
-            if (string.IsNullOrEmpty(folderId))
-            {
-                var fileMetadata = new Google.Apis.Drive.v3.Data.File()
-                {
-                    Name = folderName,
-                    MimeType = "application/vnd.google-apps.folder"
-                };
-                
+            try {
+                // Загрузка в папку события, если eventFolderId указан
                 if (!string.IsNullOrEmpty(eventFolderId))
                 {
-                    fileMetadata.Parents = new List<string> { eventFolderId };
+                    var eventFileMetadata = new Google.Apis.Drive.v3.Data.File()
+                    {
+                        Name = fileName,
+                        Parents = new List<string> { eventFolderId }
+                    };
+                    
+                    using (var stream = new FileStream(filePath, FileMode.Open))
+                    {
+                        var eventUploadRequest = _driveService.Files.Create(eventFileMetadata, stream, "");
+                        eventUploadRequest.Fields = "id, webContentLink";
+                        await Task.Run(() => eventUploadRequest.Upload());
+                        
+                        // Сохраняем идентификатор файла для возможного удаления при ошибке
+                        fileId = eventUploadRequest.ResponseBody.Id;
+                    }
                 }
                 
-                var folderRequest = _driveService.Files.Create(fileMetadata);
+                // Создаем индивидуальную папку в Universal Videos для этого файла
+                var individualFolderMetadata = new Google.Apis.Drive.v3.Data.File()
+                {
+                    Name = folderName,
+                    MimeType = "application/vnd.google-apps.folder",
+                    Parents = new List<string> { UNIVERSAL_FOLDER_ID }
+                };
+                
+                var folderRequest = _driveService.Files.Create(individualFolderMetadata);
                 folderRequest.Fields = "id";
                 var folder = await Task.Run(() => folderRequest.Execute());
                 folderId = folder.Id;
-            }
-            
-            var fileMetadataUpload = new Google.Apis.Drive.v3.Data.File()
-            {
-                Name = fileName,
-                Parents = new List<string> { folderId }
-            };
-            
-            using (var stream = new FileStream(filePath, FileMode.Open))
-            {
-                var uploadRequest = _driveService.Files.Create(fileMetadataUpload, stream, "");
-                uploadRequest.Fields = "id, webContentLink";
-                uploadRequest.Upload();
                 
-                var uploadedFile = uploadRequest.ResponseBody;
-                
-                // Если файл должен быть публичным, установим соответствующие разрешения
-                if (isPublic)
+                // Загружаем файл в индивидуальную папку
+                var fileMetadataUpload = new Google.Apis.Drive.v3.Data.File()
                 {
-                    var permissionRequest = _driveService.Permissions.Create(
-                        new Google.Apis.Drive.v3.Data.Permission()
-                        {
-                            Type = "anyone",
-                            Role = "reader"
-                        },
-                        uploadedFile.Id);
-                    await Task.Run(() => permissionRequest.Execute());
+                    Name = fileName,
+                    Parents = new List<string> { folderId }
+                };
+                
+                string universalFileId;
+                using (var stream = new FileStream(filePath, FileMode.Open))
+                {
+                    var uploadRequest = _driveService.Files.Create(fileMetadataUpload, stream, "");
+                    uploadRequest.Fields = "id, webContentLink";
+                    await Task.Run(() => uploadRequest.Upload());
+                    
+                    var uploadedFile = uploadRequest.ResponseBody;
+                    universalFileId = uploadedFile.Id;
+                    
+                    // Если файл должен быть публичным, установим соответствующие разрешения
+                    if (isPublic)
+                    {
+                        var permissionRequest = _driveService.Permissions.Create(
+                            new Google.Apis.Drive.v3.Data.Permission()
+                            {
+                                Type = "anyone",
+                                Role = "reader"
+                            },
+                            uploadedFile.Id);
+                        await Task.Run(() => permissionRequest.Execute());
+                    }
+                    
+                    // Создаем ссылку для QR-кода
+                    string qrUrl = $"https://drive.google.com/file/d/{uploadedFile.Id}/view";
+                    Bitmap qrCode = GenerateQrCode(qrUrl);
+                    
+                    // Возвращаем результат загрузки
+                    return new UploadResult
+                    {
+                        FileId = uploadedFile.Id,
+                        FolderId = folderId,
+                        QrCode = qrCode,
+                        Url = qrUrl
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка при загрузке в Google Drive: {ex.Message}");
+                
+                // Попытка очистить ресурсы при ошибке
+                if (!string.IsNullOrEmpty(fileId))
+                {
+                    try
+                    {
+                        await Task.Run(() => _driveService.Files.Delete(fileId).Execute());
+                    }
+                    catch { /* Игнорируем ошибки при очистке */ }
                 }
                 
-                // Создаем ссылку для QR-кода
-                string qrUrl = $"https://drive.google.com/file/d/{uploadedFile.Id}/view";
-                Bitmap qrCode = GenerateQrCode(qrUrl);
-                
-                // Возвращаем результат загрузки
-                return new UploadResult
+                if (!string.IsNullOrEmpty(folderId))
                 {
-                    FileId = uploadedFile.Id,
-                    FolderId = folderId,
-                    QrCode = qrCode,
-                    Url = qrUrl
-                };
+                    try
+                    {
+                        await Task.Run(() => _driveService.Files.Delete(folderId).Execute());
+                    }
+                    catch { /* Игнорируем ошибки при очистке */ }
+                }
+                
+                throw; // Пробрасываем исключение дальше
             }
         }
 

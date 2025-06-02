@@ -174,100 +174,8 @@ namespace UnifiedPhotoBooth
             if (frame == null)
                 return null;
             
-            double frameAspectRatio = (double)frame.Width / frame.Height;
-            
-            // Если соотношение сторон совпадает, просто возвращаем копию кадра
-            if (Math.Abs(frameAspectRatio - targetAspectRatio) < 0.01)
-            {
-                return frame.Clone();
-            }
-            
-            Mat resultFrame;
-            
-            switch (mode)
-            {
-                case ImageProcessingMode.Stretch:
-                    // Простое растягивание - просто возвращаем исходный кадр
-                    resultFrame = frame.Clone();
-                    break;
-                    
-                case ImageProcessingMode.Crop:
-                    // Обрезка для соответствия пропорциям
-                    if (frameAspectRatio > targetAspectRatio) // Кадр шире, чем нужно
-                    {
-                        int newWidth = (int)(frame.Height * targetAspectRatio);
-                        int xOffset = (frame.Width - newWidth) / 2;
-                        var cropRoi = new Rect(xOffset, 0, newWidth, frame.Height);
-                        resultFrame = new Mat(frame, cropRoi);
-                    }
-                    else // Кадр выше, чем нужно
-                    {
-                        int newHeight = (int)(frame.Width / targetAspectRatio);
-                        int yOffset = (frame.Height - newHeight) / 2;
-                        var cropRoi = new Rect(0, yOffset, frame.Width, newHeight);
-                        resultFrame = new Mat(frame, cropRoi);
-                    }
-                    break;
-                    
-                case ImageProcessingMode.Scale:
-                    // Масштабирование, чтобы заполнить область с сохранением пропорций
-                    double scaleX = 1.0;
-                    double scaleY = 1.0;
-                    
-                    if (frameAspectRatio > targetAspectRatio) // Кадр шире, чем нужно
-                    {
-                        // Подгоняем по высоте, увеличивая высоту
-                        scaleY = 1.0 / (frameAspectRatio / targetAspectRatio);
-                        scaleX = 1.0;
-                    }
-                    else // Кадр выше, чем нужно
-                    {
-                        // Подгоняем по ширине, увеличивая ширину
-                        scaleX = targetAspectRatio / frameAspectRatio;
-                        scaleY = 1.0;
-                    }
-                    
-                    // Масштабируем изображение
-                    int scaledWidth = (int)(frame.Width * scaleX);
-                    int scaledHeight = (int)(frame.Height * scaleY);
-                    
-                    // Создаем новое изображение с нужным соотношением сторон
-                    Mat scaledFrame = new Mat();
-                    Cv2.Resize(frame, scaledFrame, new OpenCvSharp.Size(scaledWidth, scaledHeight));
-                    
-                    // Центрируем изображение и обрезаем лишнее, если нужно
-                    int targetWidth = frame.Width;
-                    int targetHeight = frame.Height;
-                    
-                    if (scaledWidth > targetWidth || scaledHeight > targetHeight)
-                    {
-                        int xOffset = (scaledWidth - targetWidth) / 2;
-                        int yOffset = (scaledHeight - targetHeight) / 2;
-                        
-                        // Проверяем, чтобы ROI не выходил за границы изображения
-                        xOffset = Math.Max(0, Math.Min(xOffset, scaledWidth - targetWidth));
-                        yOffset = Math.Max(0, Math.Min(yOffset, scaledHeight - targetHeight));
-                        
-                        // Корректируем размер ROI, если он выходит за границы
-                        int roiWidth = Math.Min(targetWidth, scaledWidth);
-                        int roiHeight = Math.Min(targetHeight, scaledHeight);
-                        
-                        var roi = new Rect(xOffset, yOffset, roiWidth, roiHeight);
-                        resultFrame = new Mat(scaledFrame, roi);
-                        scaledFrame.Dispose();
-                    }
-                    else
-                    {
-                        resultFrame = scaledFrame;
-                    }
-                    break;
-                    
-                default: // Если неизвестный режим, просто возвращаем копию кадра
-                    resultFrame = frame.Clone();
-                    break;
-            }
-            
-            return resultFrame;
+            // Всегда применяем растягивание, независимо от выбранного режима
+            return frame.Clone();
         }
         
         private void ApplyRotation(Mat frame)
@@ -687,35 +595,29 @@ namespace UnifiedPhotoBooth
             System.Windows.Controls.Image printImage = new System.Windows.Controls.Image();
             printImage.Source = bitmap;
             
-            // Применяем режим обработки
-            switch (SettingsWindow.AppSettings.PrintProcessingMode)
+            // Определяем ориентацию изображения
+            bool isImageVertical = bitmap.PixelHeight > bitmap.PixelWidth;
+            
+            // Применяем корректную ориентацию
+            if (isImageVertical)
             {
-                case ImageProcessingMode.Stretch:
-                    // Растягиваем изображение на всю страницу
-                    printImage.Width = canvas.Width;
-                    printImage.Height = canvas.Height;
-                    printImage.Stretch = Stretch.Fill;
-                    break;
-                    
-                case ImageProcessingMode.Crop:
-                    // Заполняем с обрезкой по краям
-                    printImage.Width = canvas.Width;
-                    printImage.Height = canvas.Height;
-                    printImage.Stretch = Stretch.UniformToFill;
-                    break;
-                    
-                case ImageProcessingMode.Scale:
-                    // Масштабируем с сохранением пропорций и добавлением полей
-                    printImage.Width = canvas.Width;
-                    printImage.Height = canvas.Height;
-                    printImage.Stretch = Stretch.Uniform;
-                    break;
+                // Вертикальное изображение
+                printImage.Width = canvas.Width;
+                printImage.Height = canvas.Height;
+                printImage.Stretch = Stretch.Uniform;
+            }
+            else
+            {
+                // Горизонтальное изображение
+                printImage.Width = canvas.Width;
+                printImage.Height = canvas.Height;
+                printImage.Stretch = Stretch.Uniform;
             }
             
             canvas.Children.Add(printImage);
             
             // Печать
-            printDialog.PrintVisual(canvas, "Фотобудка - Печать");
+            printDialog.PrintVisual(canvas, "PhotoboothPro - Печать");
         }
         
         private double ConvertCmToPixels(double cm)

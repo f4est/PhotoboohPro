@@ -365,37 +365,18 @@ namespace UnifiedPhotoBooth
         {
             try
             {
-                // Создаем папку для сохранения видео, если ее нет
-                string recordingsDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "recordings");
-                System.IO.Directory.CreateDirectory(recordingsDir);
-                
-                // Создаем временную директорию и убеждаемся, что она существует
-                string tempDir = System.IO.Path.Combine(recordingsDir, "temp");
-                if (System.IO.Directory.Exists(tempDir))
+                // Создаем папку для временных файлов
+                string tempVideoDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "recordings", "temp");
+                if (!Directory.Exists(tempVideoDir))
                 {
-                    try
-                    {
-                        // Очищаем временную директорию перед записью
-                        foreach (var file in System.IO.Directory.GetFiles(tempDir))
-                        {
-                            try { System.IO.File.Delete(file); } catch { }
-                        }
-                    }
-                    catch { }
-                }
-                else
-                {
-                    System.IO.Directory.CreateDirectory(tempDir);
+                    Directory.CreateDirectory(tempVideoDir);
                 }
                 
-                // Формируем имя файла на основе текущей даты и времени
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                _recordingFilePath = System.IO.Path.Combine(recordingsDir, $"VideoBoothRecording_{timestamp}.mp4");
-                _audioFilePath = System.IO.Path.Combine(recordingsDir, $"AudioRecording_{timestamp}.wav");
+                // Генерируем случайное имя для файла видео
+                string dateStr = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                string tempFileName = $"video_{dateStr}_{Guid.NewGuid().ToString().Substring(0, 8)}.avi";
+                string tempVideoPath = Path.Combine(tempVideoDir, tempFileName);
                 
-                // Задаем имя временного видеофайла и сохраняем полный путь
-                string tempVideoFileName = $"temp_{timestamp}.avi";
-                string tempVideoPath = System.IO.Path.Combine(tempDir, tempVideoFileName);
                 _tempVideoPath = tempVideoPath; // Сохраняем путь к временному файлу как поле класса
                 
                 // Получаем размеры кадра
@@ -404,7 +385,9 @@ namespace UnifiedPhotoBooth
                 
                 // Применяем поворот, если необходимо, и соответственно меняем размеры
                 string rotationMode = SettingsWindow.AppSettings.RotationMode;
-                if (rotationMode == "90° вправо (вертикально)" || rotationMode == "90° влево (вертикально)")
+                bool isRotated = rotationMode == "90° вправо (вертикально)" || rotationMode == "90° влево (вертикально)";
+                
+                if (isRotated)
                 {
                     // При повороте на 90 градусов меняем местами ширину и высоту
                     int temp = frameWidth;
@@ -450,117 +433,56 @@ namespace UnifiedPhotoBooth
                     videoHeight = videoHeight - (videoHeight % 2); // Убеждаемся, что высота кратна 2
                 }
                 
-                // Используем кодек MJPG для записи, он наиболее надежный
+                // Используем одинаковый кодек для всех случаев
                 int fourcc = VideoWriter.FourCC('M', 'J', 'P', 'G');
                 
                 try
                 {
-                    _videoWriter = new VideoWriter(_tempVideoPath, fourcc, 30, new OpenCvSharp.Size(videoWidth, videoHeight));
+                    // Создаем объект для записи видео
+                    _videoWriter = new VideoWriter(tempVideoPath, fourcc, 15, new OpenCvSharp.Size(videoWidth, videoHeight));
                     
                     if (!_videoWriter.IsOpened())
                     {
-                        // Пробуем другие кодеки, если MJPG не работает
-                        _videoWriter?.Dispose();
-                        fourcc = VideoWriter.FourCC('X', 'V', 'I', 'D');
-                        _videoWriter = new VideoWriter(_tempVideoPath, fourcc, 30, new OpenCvSharp.Size(videoWidth, videoHeight));
-                        
-                        if (!_videoWriter.IsOpened())
-                        {
-                            _videoWriter?.Dispose();
-                            fourcc = VideoWriter.FourCC('D', 'I', 'V', 'X');
-                            _videoWriter = new VideoWriter(_tempVideoPath, fourcc, 30, new OpenCvSharp.Size(videoWidth, videoHeight));
-                            
-                            if (!_videoWriter.IsOpened())
-                            {
-                                throw new Exception("Не удалось инициализировать VideoWriter с поддерживаемым кодеком");
-                            }
-                        }
+                        throw new Exception("Не удалось открыть VideoWriter.");
                     }
                     
-                    // Проверяем, что временный файл действительно создается
-                    string dirPath = System.IO.Path.GetDirectoryName(_tempVideoPath);
-                    if (!System.IO.Directory.Exists(dirPath))
-                    {
-                        System.IO.Directory.CreateDirectory(dirPath);
-                    }
+                    // Запускаем запись
+                    _isRecording = true;
+                    _recordingFilePath = tempVideoPath;
                     
-                    // Записываем тестовый кадр для проверки
-                    using (var testFrame = new Mat(videoHeight, videoWidth, MatType.CV_8UC3, Scalar.Black))
-                    {
-                        _videoWriter.Write(testFrame);
-                        
-                        // Проверка, что временный файл действительно создан
-                        if (!System.IO.File.Exists(_tempVideoPath))
-                        {
-                            // Если файл не создан, пробуем записать в корневую директорию записей
-                            _tempVideoPath = System.IO.Path.Combine(recordingsDir, tempVideoFileName);
-                            _videoWriter.Release();
-                            _videoWriter.Dispose();
-                            _videoWriter = new VideoWriter(_tempVideoPath, fourcc, 30, new OpenCvSharp.Size(videoWidth, videoHeight));
-                            
-                            if (!_videoWriter.IsOpened())
-                            {
-                                throw new Exception("Не удалось создать временный видеофайл даже в корневой директории");
-                            }
-                            
-                            _videoWriter.Write(testFrame);
-                        }
-                    }
+                    // Сбрасываем таймер записи
+                    _recordingTime = TimeSpan.Zero;
+                    
+                    // Запускаем таймер для обновления времени записи
+                    _recordingTimer.Start();
+                    
+                    // Показываем индикатор записи
+                    recordingIndicator.Visibility = Visibility.Visible;
+                    StartRecordingIndicatorAnimation();
+                    
+                    // Запускаем запись аудио
+                    StartAudioRecording();
+                    
+                    // Показываем кнопку остановки
+                    btnStopRecording.Visibility = Visibility.Visible;
+                    
+                    // Показываем таймер записи
+                    txtRecordingTime.Visibility = Visibility.Visible;
+                    
+                    ShowStatus("Запись видео", "Идет запись...");
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Не удалось создать объект для записи видео: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
-                
-                // Запускаем запись звука
-                try
-                {
-                    _waveIn = new WaveInEvent
-                    {
-                        DeviceNumber = SettingsWindow.AppSettings.MicrophoneIndex,
-                        WaveFormat = new NAudio.Wave.WaveFormat(44100, 1)
-                    };
+                    _isRecording = false;
+                    _videoWriter?.Dispose();
+                    _videoWriter = null;
                     
-                    _waveWriter = new WaveFileWriter(_audioFilePath, _waveIn.WaveFormat);
-                    
-                    _waveIn.DataAvailable += (s, e) =>
-                    {
-                        if (_waveWriter != null)
-                        {
-                            _waveWriter.Write(e.Buffer, 0, e.BytesRecorded);
-                        }
-                    };
-                    
-                    _waveIn.StartRecording();
+                    throw new Exception($"Ошибка при инициализации записи видео: {ex.Message}");
                 }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Не удалось запустить запись звука: {ex.Message}. Видео будет записано без звука.", 
-                                  "Предупреждение", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
-                
-                // Устанавливаем флаг записи
-                _isRecording = true;
-                
-                // Инициализация таймера записи и отображения времени
-                _recordingTime = TimeSpan.Zero;
-                _recordingTimer.Start();
-                txtRecordingTime.Text = "00:00";
-                txtRecordingTime.Visibility = Visibility.Visible;
-                
-                // Запускаем анимацию индикатора записи
-                StartRecordingIndicatorAnimation();
-                
-                // Обновляем интерфейс
-                btnStartRecording.Visibility = Visibility.Collapsed;
-                btnStopRecording.Visibility = Visibility.Visible;
-                
-                ShowStatus("Запись", $"Идет запись видео (макс. {SettingsWindow.AppSettings.RecordingDuration} сек.)");
             }
             catch (Exception ex)
             {
-                ShowError($"Ошибка при начале записи: {ex.Message}");
+                ShowError($"Не удалось начать запись: {ex.Message}");
                 CleanupRecording();
             }
         }
@@ -1381,27 +1303,43 @@ namespace UnifiedPhotoBooth
         
         private void BtnPlayPause_Click(object sender, RoutedEventArgs e)
         {
-            if (mediaPlayer.Source == null)
-                return;
-            
             try
             {
+                // Проверяем, есть ли что воспроизводить
+                if (mediaPlayer.Source == null)
+                {
+                    ShowStatus("Ошибка", "Нет видео для воспроизведения");
+                    return;
+                }
+                
+                // Проверяем существование файла
+                string videoPath = mediaPlayer.Source.LocalPath;
+                if (!File.Exists(videoPath))
+                {
+                    ShowStatus("Ошибка", "Видеофайл не найден");
+                    mediaPlayer.Source = null;
+                    return;
+                }
+                
                 if (_isPlaying)
                 {
                     mediaPlayer.Pause();
-                    btnPlayPause.Content = "▶";
                     _isPlaying = false;
+                    btnPlayPause.Content = "▶";
                 }
                 else
                 {
                     mediaPlayer.Play();
-                    btnPlayPause.Content = "⏸";
                     _isPlaying = true;
+                    btnPlayPause.Content = "⏸";
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 ShowError($"Ошибка при воспроизведении: {ex.Message}");
+                _isPlaying = false;
+                mediaPlayer.Stop();
+                mediaPlayer.Source = null;
             }
         }
         
@@ -1568,6 +1506,40 @@ namespace UnifiedPhotoBooth
             recordingIndicator.Visibility = System.Windows.Visibility.Collapsed;
             btnStopRecording.Visibility = System.Windows.Visibility.Collapsed;
             btnStartRecording.Visibility = System.Windows.Visibility.Visible;
+        }
+        
+        private void StartAudioRecording()
+        {
+            try
+            {
+                // Формируем имя файла для аудио на основе текущей даты и времени
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                _audioFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "recordings", $"AudioRecording_{timestamp}.wav");
+                
+                // Запускаем запись звука
+                _waveIn = new WaveInEvent
+                {
+                    DeviceNumber = SettingsWindow.AppSettings.MicrophoneIndex,
+                    WaveFormat = new NAudio.Wave.WaveFormat(44100, 1)
+                };
+                
+                _waveWriter = new WaveFileWriter(_audioFilePath, _waveIn.WaveFormat);
+                
+                _waveIn.DataAvailable += (s, e) =>
+                {
+                    if (_waveWriter != null)
+                    {
+                        _waveWriter.Write(e.Buffer, 0, e.BytesRecorded);
+                    }
+                };
+                
+                _waveIn.StartRecording();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка при запуске записи звука: {ex.Message}");
+                // Продолжаем запись без звука
+            }
         }
     }
 } 

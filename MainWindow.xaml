@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:UnifiedPhotoBooth"
         mc:Ignorable="d"
-        Title="Фотобудка и видеобудка" Height="720" Width="1280" 
+        Title="PhotoboothPro" Height="720" Width="1280" 
         WindowStartupLocation="CenterScreen" WindowState="Maximized">
     <Grid>
         <Grid.RowDefinitions>

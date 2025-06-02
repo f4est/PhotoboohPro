@@ -6,8 +6,17 @@ using OpenCvSharp;
 
 namespace UnifiedPhotoBooth
 {
+    /// <summary>
+    /// Interaction logic for App.xaml
+    /// </summary>
     public partial class App : Application
     {
+        public App()
+        {
+            // Установка имени приложения для использования в других частях кода
+            AppDomain.CurrentDomain.SetData("AppName", "PhotoboothPro");
+        }
+
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
