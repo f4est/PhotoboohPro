@@ -17,6 +17,10 @@
 *.exe
 *.dll
 *.json
+*.bin
+*.v2
+*.suo
+*.vsidx
 
 # Папки
 /publish/

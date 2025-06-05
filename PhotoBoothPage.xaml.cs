@@ -174,7 +174,7 @@ namespace UnifiedPhotoBooth
             if (frame == null)
                 return null;
             
-            // Всегда применяем растягивание, независимо от выбранного режима
+            // Всегда просто клонируем кадр без какой-либо обработки
             return frame.Clone();
         }
         
@@ -270,17 +270,9 @@ namespace UnifiedPhotoBooth
                         Cv2.Flip(frame, frame, FlipMode.Y);
                     }
                     
-                    // Обрабатываем фото в соответствии с настройками
-                    Mat processedFrame = AdjustAspectRatioByMode(frame, 1200.0 / 1800.0, SettingsWindow.AppSettings.PhotoProcessingMode);
-                    
-                    // Сохраняем фотографию
-                    var photo = processedFrame.Clone();
+                    // Просто клонируем кадр без обработки
+                    var photo = frame.Clone();
                     _capturedPhotos.Add(photo);
-                    
-                    if (processedFrame != frame)
-                    {
-                        processedFrame.Dispose();
-                    }
                     
                     ShowStatus($"Фото {_currentPhotoIndex + 1} из {SettingsWindow.AppSettings.PhotoCount}", "Фотография сделана!");
                     
@@ -333,119 +325,9 @@ namespace UnifiedPhotoBooth
             if (photo == null)
                 return null;
             
-            // Определяем ориентацию фотографии и целевые размеры
-            bool isVerticalOrientation = SettingsWindow.AppSettings.RotationMode == "90° вправо (вертикально)" || 
-                                         SettingsWindow.AppSettings.RotationMode == "90° влево (вертикально)";
-            
-            // Стандартные размеры 1200x1800 (горизонтальный) или 1800x1200 (вертикальный)
-            double standardWidth = isVerticalOrientation ? 1800 : 1200;
-            double standardHeight = isVerticalOrientation ? 1200 : 1800;
-            
-            // Получаем размеры исходной фотографии
-            double srcWidth = photo.Width;
-            double srcHeight = photo.Height;
-            double srcAspectRatio = srcWidth / srcHeight;
-            
-            // Целевое соотношение сторон
-            double targetAspectRatio = targetWidth / targetHeight;
-            double standardAspectRatio = standardWidth / standardHeight;
-            
-            // Применяем выбранный режим обработки
-            Mat processedPhoto;
-            
-            switch (SettingsWindow.AppSettings.PhotoProcessingMode)
-            {
-                case ImageProcessingMode.Stretch:
-                    // Режим растягивания - растягиваем до целевого размера
-                    processedPhoto = new Mat();
-                    Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(targetWidth, targetHeight));
-                    break;
-                    
-                case ImageProcessingMode.Crop:
-                    // Режим обрезки - сначала обрезаем до правильных пропорций, затем масштабируем
-                    if (Math.Abs(srcAspectRatio - standardAspectRatio) > 0.01)
-                    {
-                        Mat croppedPhoto;
-                        
-                        if (srcAspectRatio > standardAspectRatio) // Фото шире, чем нужно
-                        {
-                            // Обрезаем по бокам
-                            int cropWidth = (int)(srcHeight * standardAspectRatio);
-                            int xOffset = (int)((srcWidth - cropWidth) / 2);
-                            var roi = new Rect(xOffset, 0, cropWidth, (int)srcHeight);
-                            croppedPhoto = new Mat(photo, roi);
-                        }
-                        else // Фото выше, чем нужно
-                        {
-                            // Обрезаем сверху и снизу
-                            int cropHeight = (int)(srcWidth / standardAspectRatio);
-                            int yOffset = (int)((srcHeight - cropHeight) / 2);
-                            var roi = new Rect(0, yOffset, (int)srcWidth, cropHeight);
-                            croppedPhoto = new Mat(photo, roi);
-                        }
-                        
-                        // Теперь масштабируем до целевого размера
-                        processedPhoto = new Mat();
-                        Cv2.Resize(croppedPhoto, processedPhoto, new OpenCvSharp.Size(targetWidth, targetHeight));
-                        croppedPhoto.Dispose();
-                    }
-                    else
-                    {
-                        // Если соотношения сторон уже соответствуют, просто масштабируем
-                        processedPhoto = new Mat();
-                        Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(targetWidth, targetHeight));
-                    }
-                    break;
-                    
-                case ImageProcessingMode.Scale:
-                    // Режим масштабирования - увеличиваем фото до нужных пропорций, затем масштабируем
-                    double scaleX = standardWidth / srcWidth;
-                    double scaleY = standardHeight / srcHeight;
-                    double scale = Math.Min(scaleX, scaleY); // Берем минимальный масштаб для сохранения пропорций
-                    
-                    // Масштабируем изображение до стандартных пропорций
-                    int scaledWidth = (int)(srcWidth * scale);
-                    int scaledHeight = (int)(srcHeight * scale);
-                    
-                    Mat scaledPhoto = new Mat();
-                    Cv2.Resize(photo, scaledPhoto, new OpenCvSharp.Size(scaledWidth, scaledHeight));
-                    
-                    // Теперь масштабируем до целевого размера с заполнением
-                    scaleX = targetWidth / scaledWidth;
-                    scaleY = targetHeight / scaledHeight;
-                    scale = Math.Max(scaleX, scaleY); // Берем максимальный масштаб для заполнения области
-                    
-                    int finalWidth = (int)(scaledWidth * scale);
-                    int finalHeight = (int)(scaledHeight * scale);
-                    
-                    Mat enlargedPhoto = new Mat();
-                    Cv2.Resize(scaledPhoto, enlargedPhoto, new OpenCvSharp.Size(finalWidth, finalHeight));
-                    scaledPhoto.Dispose();
-                    
-                    // Если размер больше целевого, обрезаем до целевого размера
-                    if (finalWidth > targetWidth || finalHeight > targetHeight)
-                    {
-                        int xOffset = (finalWidth - (int)targetWidth) / 2;
-                        int yOffset = (finalHeight - (int)targetHeight) / 2;
-                        
-                        var roi = new Rect(xOffset, yOffset, (int)targetWidth, (int)targetHeight);
-                        processedPhoto = new Mat(enlargedPhoto, roi);
-                        enlargedPhoto.Dispose();
-                    }
-                    else
-                    {
-                        // Если изображение меньше целевого (что маловероятно), используем его
-                        processedPhoto = enlargedPhoto;
-                    }
-                    break;
-                    
-                default:
-                    // По умолчанию используем режим растягивания
-                    processedPhoto = new Mat();
-                    Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(targetWidth, targetHeight));
-                    break;
-            }
-            
+            // Просто изменяем размер фото без дополнительной обработки
+            Mat processedPhoto = new Mat();
+            Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(targetWidth, targetHeight));
             return processedPhoto;
         }
         
@@ -578,46 +460,54 @@ namespace UnifiedPhotoBooth
         
         private void PrintImage(System.Windows.Controls.PrintDialog printDialog, string imagePath)
         {
-            // Загружаем изображение
-            BitmapImage bitmap = new BitmapImage(new Uri(imagePath));
-            
-            // Получаем размеры страницы принтера
-            double printWidth = SettingsWindow.AppSettings.PrintWidth;
-            double printHeight = SettingsWindow.AppSettings.PrintHeight;
-            
-            // Создаем контейнер для изображения
-            System.Windows.Controls.Canvas canvas = new System.Windows.Controls.Canvas();
-            canvas.Width = ConvertCmToPixels(printWidth);
-            canvas.Height = ConvertCmToPixels(printHeight);
-            canvas.Background = System.Windows.Media.Brushes.White;
-            
-            // Создаем изображение для печати
-            System.Windows.Controls.Image printImage = new System.Windows.Controls.Image();
-            printImage.Source = bitmap;
-            
-            // Определяем ориентацию изображения
-            bool isImageVertical = bitmap.PixelHeight > bitmap.PixelWidth;
-            
-            // Применяем корректную ориентацию
-            if (isImageVertical)
+            try
             {
-                // Вертикальное изображение
+                // Загружаем изображение
+                BitmapImage bitmap = new BitmapImage(new Uri(imagePath));
+                
+                // Определяем ориентацию изображения
+                bool isImageVertical = bitmap.PixelHeight > bitmap.PixelWidth;
+                
+                // Получаем размеры страницы принтера
+                double printWidth = SettingsWindow.AppSettings.PrintWidth;
+                double printHeight = SettingsWindow.AppSettings.PrintHeight;
+                
+                // Создаем контейнер для изображения с учетом ориентации
+                System.Windows.Controls.Canvas canvas = new System.Windows.Controls.Canvas();
+                
+                // Задаем размеры для холста в зависимости от ориентации изображения
+                if (isImageVertical)
+                {
+                    // Если изображение вертикальное, используем вертикальную ориентацию бумаги
+                    canvas.Width = ConvertCmToPixels(Math.Min(printWidth, printHeight));
+                    canvas.Height = ConvertCmToPixels(Math.Max(printWidth, printHeight));
+                }
+                else
+                {
+                    // Если изображение горизонтальное, используем горизонтальную ориентацию бумаги
+                    canvas.Width = ConvertCmToPixels(Math.Max(printWidth, printHeight));
+                    canvas.Height = ConvertCmToPixels(Math.Min(printWidth, printHeight));
+                }
+                
+                canvas.Background = System.Windows.Media.Brushes.White;
+                
+                // Создаем изображение для печати
+                System.Windows.Controls.Image printImage = new System.Windows.Controls.Image();
+                printImage.Source = bitmap;
                 printImage.Width = canvas.Width;
                 printImage.Height = canvas.Height;
                 printImage.Stretch = Stretch.Uniform;
+                
+                // Добавляем изображение на холст
+                canvas.Children.Add(printImage);
+                
+                // Печать
+                printDialog.PrintVisual(canvas, "PhotoboothPro - Печать");
             }
-            else
+            catch (Exception ex)
             {
-                // Горизонтальное изображение
-                printImage.Width = canvas.Width;
-                printImage.Height = canvas.Height;
-                printImage.Stretch = Stretch.Uniform;
+                ShowError($"Ошибка при подготовке изображения для печати: {ex.Message}");
             }
-            
-            canvas.Children.Add(printImage);
-            
-            // Печать
-            printDialog.PrintVisual(canvas, "PhotoboothPro - Печать");
         }
         
         private double ConvertCmToPixels(double cm)
@@ -672,13 +562,9 @@ namespace UnifiedPhotoBooth
                 string frameTemplatePath = SettingsWindow.AppSettings.FrameTemplatePath;
                 Mat result;
                 
-                // Определяем ориентацию на основе настроек
-                bool isVerticalOrientation = SettingsWindow.AppSettings.RotationMode == "90° вправо (вертикально)" || 
-                                             SettingsWindow.AppSettings.RotationMode == "90° влево (вертикально)";
-                
-                // Стандартные размеры 1200x1800 (горизонтальный) или 1800x1200 (вертикальный)
-                int finalWidth = isVerticalOrientation ? 1800 : 1200;
-                int finalHeight = isVerticalOrientation ? 1200 : 1800;
+                // Всегда используем фиксированные размеры: 1200x1800, независимо от ориентации
+                int finalWidth = 1200;
+                int finalHeight = 1800;
                 
                 if (!string.IsNullOrEmpty(frameTemplatePath) && File.Exists(frameTemplatePath))
                 {
@@ -694,8 +580,17 @@ namespace UnifiedPhotoBooth
                     // Вставляем фотографии в позиции на шаблоне
                     var positions = SettingsWindow.AppSettings.PhotoPositions;
                     
+                    // Логируем информацию о позициях и фотографиях
+                    System.Diagnostics.Debug.WriteLine($"Создание коллажа: найдено {positions.Count} позиций и {_capturedPhotos.Count} фотографий");
+                    for (int i = 0; i < positions.Count; i++)
+                    {
+                        var pos = positions[i];
+                        System.Diagnostics.Debug.WriteLine($"Позиция {i+1}: X={pos.X}, Y={pos.Y}, Width={pos.Width}, Height={pos.Height}");
+                    }
+                    
                     // Если позиций меньше, чем фотографий, используем только доступные позиции
                     int photoCount = Math.Min(_capturedPhotos.Count, positions.Count);
+                    System.Diagnostics.Debug.WriteLine($"Будет размещено {photoCount} фотографий");
                     
                     for (int i = 0; i < photoCount; i++)
                     {
@@ -704,8 +599,9 @@ namespace UnifiedPhotoBooth
                         var photo = _capturedPhotos[i].Clone(); // Клонируем для безопасности операций
                         var pos = positions[i];
                         
-                        // Обрабатываем фото в соответствии с режимом обработки
-                        Mat processedPhoto = ProcessPhoto(photo, pos.Width, pos.Height);
+                        // Изменяем размер фото для соответствия позиции в шаблоне
+                        Mat processedPhoto = new Mat();
+                        Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(pos.Width, pos.Height));
                         photo.Dispose();
                         
                         // Проверяем границы перед созданием ROI
@@ -750,7 +646,7 @@ namespace UnifiedPhotoBooth
                     
                     // Определяем размер и расположение областей в зависимости от количества фотографий
                     int cols, rows;
-                    double photoWidth, photoHeight;
+                    int photoWidth, photoHeight;
                     
                     if (_capturedPhotos.Count == 1) {
                         cols = 1;
@@ -784,15 +680,16 @@ namespace UnifiedPhotoBooth
                         
                         var photo = _capturedPhotos[i].Clone();
                         
-                        // Обрабатываем фото в соответствии с режимом обработки
-                        Mat processedPhoto = ProcessPhoto(photo, photoWidth, photoHeight);
+                        // Масштабируем фото до нужного размера
+                        Mat processedPhoto = new Mat();
+                        Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(photoWidth, photoHeight));
                         photo.Dispose();
                         
                         var resultRoi = new Mat(result, new OpenCvSharp.Rect(
-                            (int)(col * photoWidth), 
-                            (int)(row * photoHeight), 
-                            (int)photoWidth, 
-                            (int)photoHeight));
+                            col * photoWidth, 
+                            row * photoHeight, 
+                            photoWidth, 
+                            photoHeight));
                         
                         processedPhoto.CopyTo(resultRoi);
                         processedPhoto.Dispose();
@@ -827,10 +724,9 @@ namespace UnifiedPhotoBooth
                 });
                 
                 // В случае ошибки возвращаем пустое изображение
-                bool isVerticalOrientation = SettingsWindow.AppSettings.RotationMode == "90° вправо (вертикально)" || 
-                                             SettingsWindow.AppSettings.RotationMode == "90° влево (вертикально)";
-                int width = isVerticalOrientation ? 1800 : 1200;
-                int height = isVerticalOrientation ? 1200 : 1800;
+                // Всегда используем фиксированные размеры итогового изображения
+                int width = 1200;
+                int height = 1800;
                 return new Mat(height, width, MatType.CV_8UC3, Scalar.White);
             }
         }

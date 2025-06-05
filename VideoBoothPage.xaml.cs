@@ -40,8 +40,6 @@ namespace UnifiedPhotoBooth
         private DispatcherTimer _recordingTimer;
         private TimeSpan _recordingTime;
         
-        private WaveInEvent _waveIn;
-        private WaveFileWriter _waveWriter;
         private string _audioFilePath;
         
         private bool _isPlaying;
@@ -164,45 +162,60 @@ namespace UnifiedPhotoBooth
             if (!_previewRunning || _capture == null || !_capture.IsOpened())
                 return;
             
-            using (var frame = new Mat())
+            try
             {
-                if (_capture.Read(frame))
+                using (var frame = new Mat())
                 {
-                    // Применяем поворот, если необходимо
-                    ApplyRotation(frame);
-                    
-                    // Применяем зеркальное отображение, если включено
-                    if (SettingsWindow.AppSettings.MirrorMode)
+                    if (_capture.Read(frame))
                     {
-                        Cv2.Flip(frame, frame, FlipMode.Y);
-                    }
-                    
-                    // Убираем черные края путем обрезки до нужного соотношения сторон
-                    Mat frameWithCorrectAspect = AdjustAspectRatio(frame, 1200.0 / 1800.0);
-                    
-                    // Накладываем оверлей, если есть
-                    ApplyOverlay(frameWithCorrectAspect);
-                    
-                    // Отображаем кадр
-                    imgPreview.Source = BitmapSourceConverter.ToBitmapSource(frameWithCorrectAspect);
-                    
-                    // Если идет запись, сохраняем кадр в видео
-                    if (_isRecording && _videoWriter != null && _videoWriter.IsOpened())
-                    {
-                        // Для записи мы должны использовать кадр с правильным соотношением сторон
-                        // и подходящего размера для VideoWriter
-                        Mat frameForRecording = new Mat();
-                        Cv2.Resize(frameWithCorrectAspect, frameForRecording, _videoWriter.FrameSize);
-                        _videoWriter.Write(frameForRecording);
-                        frameForRecording.Dispose();
-                    }
-                    
-                    // Освобождаем ресурсы
-                    if (frameWithCorrectAspect != frame)
-                    {
-                        frameWithCorrectAspect.Dispose();
+                        // Применяем поворот, если необходимо
+                        ApplyRotation(frame);
+                        
+                        // Применяем зеркальное отображение, если включено
+                        if (SettingsWindow.AppSettings.MirrorMode)
+                        {
+                            Cv2.Flip(frame, frame, FlipMode.Y);
+                        }
+                        
+                        // Убираем черные края путем обрезки до нужного соотношения сторон
+                        Mat frameWithCorrectAspect = AdjustAspectRatio(frame, 1200.0 / 1800.0);
+                        
+                        // Накладываем оверлей, если есть
+                        ApplyOverlay(frameWithCorrectAspect);
+                        
+                        // Отображаем кадр
+                        imgPreview.Source = BitmapSourceConverter.ToBitmapSource(frameWithCorrectAspect);
+                        
+                        // Если идет запись, сохраняем кадр в видео
+                        if (_isRecording && _videoWriter != null && _videoWriter.IsOpened())
+                        {
+                            try
+                            {
+                                // Для записи используем копию кадра с правильными размерами
+                                Mat frameForRecording = new Mat();
+                                Cv2.Resize(frameWithCorrectAspect, frameForRecording, _videoWriter.FrameSize);
+                                _videoWriter.Write(frameForRecording);
+                                frameForRecording.Dispose();
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Ошибка при записи кадра: {ex.Message}");
+                                // Продолжаем запись, даже если был пропущен кадр
+                            }
+                        }
+                        
+                        // Освобождаем ресурсы
+                        if (frameWithCorrectAspect != frame)
+                        {
+                            frameWithCorrectAspect.Dispose();
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка в PreviewTimer_Tick: {ex.Message}");
+                // Продолжаем работу даже при ошибке
             }
         }
         
@@ -365,25 +378,26 @@ namespace UnifiedPhotoBooth
         {
             try
             {
-                // Создаем папку для временных файлов
-                string tempVideoDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "recordings", "temp");
-                if (!Directory.Exists(tempVideoDir))
-                {
-                    Directory.CreateDirectory(tempVideoDir);
-                }
+                // Создаем директории для записи
+                string recordingsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "recordings");
+                Directory.CreateDirectory(recordingsDir);
                 
-                // Генерируем случайное имя для файла видео
-                string dateStr = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-                string tempFileName = $"video_{dateStr}_{Guid.NewGuid().ToString().Substring(0, 8)}.avi";
-                string tempVideoPath = Path.Combine(tempVideoDir, tempFileName);
+                // Генерируем имя файла на основе текущей даты и времени
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string videoFileName = $"video_{timestamp}.mp4";
+                string videoPath = Path.Combine(recordingsDir, videoFileName);
                 
-                _tempVideoPath = tempVideoPath; // Сохраняем путь к временному файлу как поле класса
+                // Сохраняем путь к видеофайлу
+                _recordingFilePath = videoPath;
                 
-                // Получаем размеры кадра
+                // Инициализация _audioFilePath
+                _audioFilePath = videoPath.Replace(".mp4", ".wav");
+                
+                // Получаем размеры кадра с учетом поворота
                 int frameWidth = (int)_capture.Get(OpenCvSharp.VideoCaptureProperties.FrameWidth);
                 int frameHeight = (int)_capture.Get(OpenCvSharp.VideoCaptureProperties.FrameHeight);
                 
-                // Применяем поворот, если необходимо, и соответственно меняем размеры
+                // Применяем поворот, если необходимо
                 string rotationMode = SettingsWindow.AppSettings.RotationMode;
                 bool isRotated = rotationMode == "90° вправо (вертикально)" || rotationMode == "90° влево (вертикально)";
                 
@@ -395,63 +409,46 @@ namespace UnifiedPhotoBooth
                     frameHeight = temp;
                 }
                 
-                // Целевое разрешение с соотношением 4:6 (1200x1800)
-                int targetWidth = 1200;
-                int targetHeight = 1800;
-                
-                // Определяем разрешение видео с соотношением 4:6 (2:3)
-                double targetAspectRatio = (double)targetWidth / targetHeight; // 2:3
-                
-                // Масштабируем видео до разрешения 1200x1800 или пропорционально меньше
-                int videoWidth, videoHeight;
-                
-                // Рассчитываем размеры с сохранением соотношения 2:3
-                if (frameHeight * targetAspectRatio > frameWidth)
-                {
-                    // Ограничение по ширине
-                    videoWidth = frameWidth;
-                    videoHeight = (int)(frameWidth / targetAspectRatio);
-                }
-                else
-                {
-                    // Ограничение по высоте
-                    videoHeight = frameHeight;
-                    videoWidth = (int)(frameHeight * targetAspectRatio);
-                }
-                
                 // Убеждаемся, что размеры кратны 2 (требование многих кодеков)
-                videoWidth = videoWidth - (videoWidth % 2);
-                videoHeight = videoHeight - (videoHeight % 2);
+                frameWidth = frameWidth - (frameWidth % 2);
+                frameHeight = frameHeight - (frameHeight % 2);
                 
-                // Для повышения производительности можем уменьшить размер, но сохранить соотношение
-                double scaleFactor = 1.0;
-                if (videoWidth > 720) // Если ширина больше 720, уменьшаем
-                {
-                    scaleFactor = 720.0 / videoWidth;
-                    videoWidth = 720;
-                    videoHeight = (int)(videoHeight * scaleFactor);
-                    videoHeight = videoHeight - (videoHeight % 2); // Убеждаемся, что высота кратна 2
-                }
+                // Используем mp4v кодек для лучшей совместимости
+                int fourcc = VideoWriter.FourCC('m', 'p', '4', 'v');
+                double fps = 30.0;
                 
-                // Используем одинаковый кодек для всех случаев
-                int fourcc = VideoWriter.FourCC('M', 'J', 'P', 'G');
-                
+                // Инициализируем VideoWriter
                 try
                 {
-                    // Создаем объект для записи видео
-                    _videoWriter = new VideoWriter(tempVideoPath, fourcc, 15, new OpenCvSharp.Size(videoWidth, videoHeight));
+                    _videoWriter = new VideoWriter(videoPath, fourcc, fps, new OpenCvSharp.Size(frameWidth, frameHeight));
                     
                     if (!_videoWriter.IsOpened())
                     {
-                        throw new Exception("Не удалось открыть VideoWriter.");
+                        // Если не удалось открыть с mp4v, пробуем другой кодек
+                        _videoWriter?.Dispose();
+                        fourcc = VideoWriter.FourCC('X', '2', '6', '4');
+                        _videoWriter = new VideoWriter(videoPath, fourcc, fps, new OpenCvSharp.Size(frameWidth, frameHeight));
+                        
+                        if (!_videoWriter.IsOpened())
+                        {
+                            // Если и это не сработало, используем MJPG
+                            _videoWriter?.Dispose();
+                            fourcc = VideoWriter.FourCC('M', 'J', 'P', 'G');
+                            _videoWriter = new VideoWriter(videoPath.Replace(".mp4", ".avi"), fourcc, fps, new OpenCvSharp.Size(frameWidth, frameHeight));
+                            
+                            if (!_videoWriter.IsOpened())
+                            {
+                                throw new Exception("Не удалось открыть VideoWriter с любым кодеком.");
+                            }
+                        }
                     }
                     
                     // Запускаем запись
                     _isRecording = true;
-                    _recordingFilePath = tempVideoPath;
                     
                     // Сбрасываем таймер записи
                     _recordingTime = TimeSpan.Zero;
+                    txtRecordingTime.Text = "00:00";
                     
                     // Запускаем таймер для обновления времени записи
                     _recordingTimer.Start();
@@ -460,13 +457,8 @@ namespace UnifiedPhotoBooth
                     recordingIndicator.Visibility = Visibility.Visible;
                     StartRecordingIndicatorAnimation();
                     
-                    // Запускаем запись аудио
-                    StartAudioRecording();
-                    
-                    // Показываем кнопку остановки
+                    // Показываем кнопку остановки и таймер
                     btnStopRecording.Visibility = Visibility.Visible;
-                    
-                    // Показываем таймер записи
                     txtRecordingTime.Visibility = Visibility.Visible;
                     
                     ShowStatus("Запись видео", "Идет запись...");
@@ -528,8 +520,9 @@ namespace UnifiedPhotoBooth
                 // Сбрасываем флаг записи
                 _isRecording = false;
                 
-                // Скрываем счетчик времени
+                // Скрываем счетчик времени и индикатор записи
                 txtRecordingTime.Visibility = Visibility.Collapsed;
+                recordingIndicator.Visibility = Visibility.Collapsed;
                 
                 // Останавливаем запись видео
                 if (_videoWriter != null && _videoWriter.IsOpened())
@@ -539,39 +532,29 @@ namespace UnifiedPhotoBooth
                     _videoWriter = null;
                 }
                 
-                // Останавливаем запись звука
-                if (_waveIn != null)
-                {
-                    _waveIn.StopRecording();
-                    _waveIn.Dispose();
-                    _waveIn = null;
-                }
+                // Проверяем, существует ли видеофайл и имеет ли он размер
+                bool videoExists = File.Exists(_recordingFilePath) && new FileInfo(_recordingFilePath).Length > 0;
                 
-                if (_waveWriter != null)
+                if (!videoExists)
                 {
-                    _waveWriter.Dispose();
-                    _waveWriter = null;
+                    ShowError("Не удалось записать видео. Пожалуйста, проверьте настройки камеры и попробуйте снова.");
+                    CleanupRecording();
+                    btnStartRecording.Visibility = Visibility.Visible;
+                    return;
                 }
                 
                 // Показываем статус
-                ShowStatus("Обработка видео", "Пожалуйста, подождите. Это может занять некоторое время.");
+                ShowStatus("Подготовка видео", "Пожалуйста, подождите...");
                 
-                // Запускаем обработку видео в отдельном потоке с приоритетом выше обычного
-                System.Threading.Tasks.Task.Factory.StartNew(() =>
+                // Запускаем обработку видео в отдельном потоке
+                Task.Run(() =>
                 {
                     try
                     {
-                        // Проверяем временный видеофайл
-                        if (string.IsNullOrEmpty(_tempVideoPath) || !System.IO.File.Exists(_tempVideoPath))
+                        Dispatcher.Invoke(() =>
                         {
-                            // Если файл не найден, ищем по всем возможным местам
-                            FindAndProcessVideoFile();
-                        }
-                        else
-                        {
-                            // Если файл найден, обрабатываем его
-                            ProcessVideoFile(_tempVideoPath);
-                        }
+                            FinalizeVideoProcessing();
+                        });
                     }
                     catch (Exception ex)
                     {
@@ -579,16 +562,16 @@ namespace UnifiedPhotoBooth
                         {
                             ShowError($"Ошибка при обработке видео: {ex.Message}");
                             CleanupRecording();
-                            btnStartRecording.Visibility = System.Windows.Visibility.Visible;
+                            btnStartRecording.Visibility = Visibility.Visible;
                         });
                     }
-                }, System.Threading.Tasks.TaskCreationOptions.LongRunning);
+                });
             }
             catch (Exception ex)
             {
                 ShowError($"Ошибка при остановке записи: {ex.Message}");
                 CleanupRecording();
-                btnStartRecording.Visibility = System.Windows.Visibility.Visible;
+                btnStartRecording.Visibility = Visibility.Visible;
             }
         }
         
@@ -820,6 +803,7 @@ namespace UnifiedPhotoBooth
                     // Сбрасываем существующие ресурсы
                     mediaPlayer.Close();
                     mediaPlayer.Source = null;
+                    GC.Collect(); // Принудительно освобождаем ресурсы, которые могли остаться от предыдущего воспроизведения
                     
                     // Настраиваем MediaPlayer
                     mediaPlayer.LoadedBehavior = System.Windows.Controls.MediaState.Manual;
@@ -828,27 +812,22 @@ namespace UnifiedPhotoBooth
                     mediaPlayer.ScrubbingEnabled = true;
                     mediaPlayer.IsMuted = false;
                     
-                    // Настраиваем обработчики событий
-                    mediaPlayer.MediaOpened += (s, e) => 
-                    {
-                        ShowStatus("Видео готово", "Воспроизведение начато");
-                        _isPlaying = true;
-                        btnPlayPause.Content = "⏸";
-                    };
+                    // Показываем медиаэлемент перед установкой источника
+                    mediaPlayer.Visibility = System.Windows.Visibility.Visible;
                     
                     // Создаем небольшую задержку перед загрузкой видео
-                    System.Threading.Tasks.Task.Delay(500).ContinueWith(_ => 
+                    System.Threading.Tasks.Task.Delay(800).ContinueWith(_ => 
                     {
                         Dispatcher.Invoke(() => 
                         {
                             try
                             {
-                                // Сначала показываем медиаэлемент, затем загружаем источник
-                                mediaPlayer.Visibility = System.Windows.Visibility.Visible;
+                                // Устанавливаем источник и сразу запускаем воспроизведение
                                 mediaPlayer.Source = videoUri;
-                                
-                                // Запускаем воспроизведение после загрузки
+                                System.Threading.Thread.Sleep(200); // Небольшая задержка для загрузки
                                 mediaPlayer.Play();
+                                _isPlaying = true;
+                                btnPlayPause.Content = "⏸";
                                 ShowStatus("Видео готово", "Вы можете поделиться видео или записать новое");
                             }
                             catch (Exception ex)
@@ -979,133 +958,112 @@ namespace UnifiedPhotoBooth
                 });
                 
                 // Путь к FFmpeg
-                string ffmpegPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe");
+                string ffmpegPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe");
                 
                 // Проверяем, существует ли FFmpeg
-                if (!System.IO.File.Exists(ffmpegPath))
+                if (!File.Exists(ffmpegPath))
                 {
-                    throw new System.IO.FileNotFoundException("FFmpeg не найден. Пожалуйста, установите FFmpeg.");
+                    throw new FileNotFoundException("FFmpeg не найден. Пожалуйста, установите FFmpeg.");
                 }
                 
                 // Проверяем существование директории для выходного файла
-                string outputDir = System.IO.Path.GetDirectoryName(outputPath);
-                if (!System.IO.Directory.Exists(outputDir))
+                string outputDir = Path.GetDirectoryName(outputPath);
+                if (!Directory.Exists(outputDir))
                 {
-                    System.IO.Directory.CreateDirectory(outputDir);
+                    Directory.CreateDirectory(outputDir);
                 }
                 
                 // Полные пути к файлам
-                videoPath = System.IO.Path.GetFullPath(videoPath);
-                audioPath = System.IO.Path.GetFullPath(audioPath);
-                outputPath = System.IO.Path.GetFullPath(outputPath);
+                videoPath = Path.GetFullPath(videoPath);
+                audioPath = Path.GetFullPath(audioPath);
+                outputPath = Path.GetFullPath(outputPath);
                 
                 // Проверяем, существуют ли исходные файлы
-                if (!System.IO.File.Exists(videoPath))
+                if (!File.Exists(videoPath))
                 {
-                    throw new System.IO.FileNotFoundException($"Видео файл не найден: {videoPath}");
+                    throw new FileNotFoundException($"Видео файл не найден: {videoPath}");
                 }
                 
-                if (!System.IO.File.Exists(audioPath))
+                if (!File.Exists(audioPath))
                 {
-                    throw new System.IO.FileNotFoundException($"Аудио файл не найден: {audioPath}");
+                    throw new FileNotFoundException($"Аудио файл не найден: {audioPath}");
                 }
                 
                 Dispatcher.Invoke(() => {
-                    ShowStatus("Обработка видео", "Объединение видео и аудио. Это может занять 1-2 минуты...");
+                    ShowStatus("Обработка видео", "Объединение видео и аудио. Это может занять несколько минут...");
                 });
                 
-                // Используем более простую команду для большей совместимости
+                // Сначала попробуем просто скопировать видео без звука, чтобы обеспечить наличие файла
+                string tempOutputPath = Path.Combine(
+                    Path.GetDirectoryName(outputPath),
+                    $"temp_{Path.GetFileName(outputPath)}");
+                
+                // Копируем видео
+                File.Copy(videoPath, tempOutputPath, true);
+                
+                // Проверяем, что копия создана
+                if (!File.Exists(tempOutputPath))
+                {
+                    throw new Exception("Не удалось создать копию видеофайла.");
+                }
+                
+                // Используем более простую команду FFmpeg
                 string arguments = $"-i \"{videoPath}\" -i \"{audioPath}\" -c:v copy -c:a aac -strict experimental -shortest \"{outputPath}\"";
                 
                 // Создаем команду для FFmpeg
-                System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo
+                ProcessStartInfo startInfo = new ProcessStartInfo
                 {
                     FileName = ffmpegPath,
                     Arguments = arguments,
                     CreateNoWindow = true,
                     UseShellExecute = false,
-                    RedirectStandardOutput = true,
                     RedirectStandardError = true
                 };
                 
-                // Переменная для отслеживания прогресса
-                int progressCounter = 0;
-                
-                // Запускаем процесс
-                using (System.Diagnostics.Process process = new System.Diagnostics.Process())
+                // Запускаем процесс с таймаутом
+                using (Process process = Process.Start(startInfo))
                 {
-                    process.StartInfo = startInfo;
-                    
-                    // Настраиваем обработчики для вывода сообщений о прогрессе
-                    process.OutputDataReceived += (sender, e) => {
-                        if (!string.IsNullOrEmpty(e.Data) && progressCounter % 10 == 0)
-                        {
-                            Dispatcher.BeginInvoke(() => {
-                                ShowStatus("Обработка видео", $"Объединение видео и аудио... {progressCounter / 10}%");
-                            });
-                        }
-                        progressCounter++;
-                    };
-                    
+                    // Читаем вывод ошибок асинхронно
+                    var errorBuilder = new System.Text.StringBuilder();
                     process.ErrorDataReceived += (sender, e) => {
-                        if (!string.IsNullOrEmpty(e.Data) && progressCounter % 10 == 0)
+                        if (!string.IsNullOrEmpty(e.Data))
                         {
-                            Dispatcher.BeginInvoke(() => {
-                                ShowStatus("Обработка видео", $"Объединение видео и аудио... {progressCounter / 10}%");
-                            });
+                            errorBuilder.AppendLine(e.Data);
                         }
-                        progressCounter++;
                     };
-                    
-                    // Запускаем процесс
-                    process.Start();
-                    process.BeginOutputReadLine();
                     process.BeginErrorReadLine();
                     
-                    // Ждем завершения процесса с таймаутом 3 минуты
-                    bool completed = process.WaitForExit(180000);
-                    
-                    if (!completed)
+                    // Ждем завершения процесса с таймаутом в 2 минуты
+                    if (!process.WaitForExit(120000))
                     {
                         try { process.Kill(); } catch { }
-                        throw new System.TimeoutException("Процесс FFmpeg превысил время ожидания (3 минуты)");
+                        
+                        // Если процесс не завершился, используем копию видео без звука
+                        File.Copy(tempOutputPath, outputPath, true);
                     }
-                    
-                    // Проверяем код выхода
-                    if (process.ExitCode != 0)
+                    else if (process.ExitCode != 0)
                     {
-                        // Используем простое копирование вместо конвертации
-                        Dispatcher.Invoke(() => {
-                            ShowStatus("Альтернативная обработка", "Пробуем сохранить видео без звука...");
-                        });
-                        
-                        // Копируем видео файл напрямую
-                        string copyPath = outputPath.Replace(".mp4", ".avi");
-                        System.IO.File.Copy(videoPath, copyPath, true);
-                        
-                        // Проверяем, что файл скопирован
-                        if (System.IO.File.Exists(copyPath))
-                        {
-                            return; // Используем этот файл
-                        }
-                        
-                        throw new System.Exception($"FFmpeg завершился с ошибкой (код: {process.ExitCode})");
+                        // Если процесс завершился с ошибкой, используем копию видео без звука
+                        File.Copy(tempOutputPath, outputPath, true);
                     }
                 }
                 
+                // Удаляем временный файл
+                try { File.Delete(tempOutputPath); } catch { }
+                
                 // Проверяем, создался ли файл
-                if (!System.IO.File.Exists(outputPath))
+                if (!File.Exists(outputPath))
                 {
-                    throw new System.IO.FileNotFoundException("Выходной файл не был создан FFmpeg");
+                    throw new FileNotFoundException("Выходной файл не был создан");
                 }
                 
                 Dispatcher.Invoke(() => {
-                    ShowStatus("Завершение обработки", "Видео успешно обработано!");
+                    ShowStatus("Завершение", "Видео успешно обработано!");
                 });
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
-                throw new System.Exception($"Ошибка при объединении видео и аудио: {ex.Message}", ex);
+                throw new Exception($"Ошибка при объединении видео и аудио: {ex.Message}", ex);
             }
         }
         
@@ -1314,9 +1272,18 @@ namespace UnifiedPhotoBooth
                 
                 // Проверяем существование файла
                 string videoPath = mediaPlayer.Source.LocalPath;
-                if (!File.Exists(videoPath))
+                if (string.IsNullOrEmpty(videoPath) || !File.Exists(videoPath))
                 {
                     ShowStatus("Ошибка", "Видеофайл не найден");
+                    mediaPlayer.Source = null;
+                    return;
+                }
+                
+                // Проверяем размер файла
+                var fileInfo = new FileInfo(videoPath);
+                if (fileInfo.Length == 0)
+                {
+                    ShowStatus("Ошибка", "Видеофайл пуст");
                     mediaPlayer.Source = null;
                     return;
                 }
@@ -1490,56 +1457,15 @@ namespace UnifiedPhotoBooth
             _isRecording = false;
             
             _recordingTimer.Stop();
-            txtRecordingTime.Visibility = System.Windows.Visibility.Collapsed;
+            txtRecordingTime.Visibility = Visibility.Collapsed;
             
             _videoWriter?.Release();
             _videoWriter?.Dispose();
             _videoWriter = null;
             
-            _waveIn?.StopRecording();
-            _waveIn?.Dispose();
-            _waveIn = null;
-            
-            _waveWriter?.Dispose();
-            _waveWriter = null;
-            
-            recordingIndicator.Visibility = System.Windows.Visibility.Collapsed;
-            btnStopRecording.Visibility = System.Windows.Visibility.Collapsed;
-            btnStartRecording.Visibility = System.Windows.Visibility.Visible;
-        }
-        
-        private void StartAudioRecording()
-        {
-            try
-            {
-                // Формируем имя файла для аудио на основе текущей даты и времени
-                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                _audioFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "recordings", $"AudioRecording_{timestamp}.wav");
-                
-                // Запускаем запись звука
-                _waveIn = new WaveInEvent
-                {
-                    DeviceNumber = SettingsWindow.AppSettings.MicrophoneIndex,
-                    WaveFormat = new NAudio.Wave.WaveFormat(44100, 1)
-                };
-                
-                _waveWriter = new WaveFileWriter(_audioFilePath, _waveIn.WaveFormat);
-                
-                _waveIn.DataAvailable += (s, e) =>
-                {
-                    if (_waveWriter != null)
-                    {
-                        _waveWriter.Write(e.Buffer, 0, e.BytesRecorded);
-                    }
-                };
-                
-                _waveIn.StartRecording();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Ошибка при запуске записи звука: {ex.Message}");
-                // Продолжаем запись без звука
-            }
+            recordingIndicator.Visibility = Visibility.Collapsed;
+            btnStopRecording.Visibility = Visibility.Collapsed;
+            btnStartRecording.Visibility = Visibility.Visible;
         }
     }
 } 

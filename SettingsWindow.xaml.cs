@@ -377,301 +377,374 @@ namespace UnifiedPhotoBooth
         
         private void BtnSetupPositions_Click(object sender, RoutedEventArgs e)
         {
-            try
+            // Проверяем, выбран ли шаблон рамки
+            if (string.IsNullOrEmpty(AppSettings.FrameTemplatePath) || !File.Exists(AppSettings.FrameTemplatePath))
             {
-                // Определяем количество фотографий
-                int photoCount = int.Parse(((ComboBoxItem)cbPhotoCount.SelectedItem).Content.ToString());
-                
-                // Загружаем изображение рамки если оно есть, иначе создаем пустой фон
-                _frameTemplateImage = new BitmapImage();
-                
-                if (!string.IsNullOrEmpty(AppSettings.FrameTemplatePath) && System.IO.File.Exists(AppSettings.FrameTemplatePath))
+                MessageBox.Show("Сначала загрузите шаблон рамки.", "Необходим шаблон", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            
+            // Загружаем изображение шаблона
+            _frameTemplateImage = new BitmapImage();
+            _frameTemplateImage.BeginInit();
+            _frameTemplateImage.UriSource = new Uri(AppSettings.FrameTemplatePath, UriKind.Absolute);
+            _frameTemplateImage.EndInit();
+            
+            // Создаем новое окно для настройки позиций
+            _positionWindow = new Window
+            {
+                Title = "Настройка позиций фотографий",
+                Owner = this,
+                Width = 1000,
+                Height = 700,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize
+            };
+            
+            // Создаем Grid для размещения элементов
+            Grid mainGrid = new Grid();
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            // Создаем панель для отображения шаблона и настройки позиций
+            Canvas canvas = new Canvas
+            {
+                Width = _frameTemplateImage.PixelWidth,
+                Height = _frameTemplateImage.PixelHeight,
+                Background = new ImageBrush(_frameTemplateImage)
+            };
+            
+            // Создаем ScrollViewer для канвы, если изображение большое
+            ScrollViewer scrollViewer = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = canvas
+            };
+            Grid.SetRow(scrollViewer, 0);
+            mainGrid.Children.Add(scrollViewer);
+            
+            // Сохраняем ссылку на canvas для дальнейшего использования
+            _positionCanvas = canvas;
+            
+            // Панель для числовых настроек позиций
+            StackPanel positionSettingsPanel = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                Margin = new Thickness(10)
+            };
+            Grid.SetRow(positionSettingsPanel, 1);
+            mainGrid.Children.Add(positionSettingsPanel);
+            
+            // Создаем элементы управления для выбора текущей области
+            var positionControlGrid = new Grid();
+            positionControlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            positionControlGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            
+            positionControlGrid.Children.Add(new TextBlock
+            {
+                Text = "Выберите область:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0)
+            });
+            
+            ComboBox positionSelector = new ComboBox
+            {
+                Margin = new Thickness(5),
+                MinWidth = 150
+            };
+            Grid.SetColumn(positionSelector, 1);
+            positionControlGrid.Children.Add(positionSelector);
+            
+            positionSettingsPanel.Children.Add(positionControlGrid);
+            
+            // Сетка для ввода координат и размеров
+            var coordinatesGrid = new Grid();
+            coordinatesGrid.Margin = new Thickness(0, 10, 0, 0);
+            
+            // Определяем строки и столбцы
+            for (int i = 0; i < 4; i++)
+                coordinatesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            coordinatesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            
+            coordinatesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            coordinatesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            coordinatesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            // Заголовки
+            var txtBlockX = new TextBlock { Text = "X:", Margin = new Thickness(5), VerticalAlignment = VerticalAlignment.Center };
+            coordinatesGrid.Children.Add(txtBlockX);
+            Grid.SetRow(txtBlockX, 0);
+            
+            var txtBlockY = new TextBlock { Text = "Y:", Margin = new Thickness(5), VerticalAlignment = VerticalAlignment.Center };
+            coordinatesGrid.Children.Add(txtBlockY);
+            Grid.SetRow(txtBlockY, 0);
+            Grid.SetColumn(txtBlockY, 2);
+            
+            // Поля для X и Y
+            TextBox txtPosX = new TextBox { Margin = new Thickness(5), Width = 80, VerticalContentAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(txtPosX, 1);
+            Grid.SetRow(txtPosX, 0);
+            coordinatesGrid.Children.Add(txtPosX);
+            
+            TextBox txtPosY = new TextBox { Margin = new Thickness(5), Width = 80, VerticalContentAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(txtPosY, 3);
+            Grid.SetRow(txtPosY, 0);
+            coordinatesGrid.Children.Add(txtPosY);
+            
+            // Заголовки для ширины и высоты
+            var txtBlockWidth = new TextBlock { Text = "Ширина:", Margin = new Thickness(5), VerticalAlignment = VerticalAlignment.Center };
+            coordinatesGrid.Children.Add(txtBlockWidth);
+            Grid.SetRow(txtBlockWidth, 1);
+            
+            var txtBlockHeight = new TextBlock { Text = "Высота:", Margin = new Thickness(5), VerticalAlignment = VerticalAlignment.Center };
+            coordinatesGrid.Children.Add(txtBlockHeight);
+            Grid.SetRow(txtBlockHeight, 1);
+            Grid.SetColumn(txtBlockHeight, 2);
+            
+            // Поля для ширины и высоты
+            TextBox txtPosWidth = new TextBox { Margin = new Thickness(5), Width = 80, VerticalContentAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(txtPosWidth, 1);
+            Grid.SetRow(txtPosWidth, 1);
+            coordinatesGrid.Children.Add(txtPosWidth);
+            
+            TextBox txtPosHeight = new TextBox { Margin = new Thickness(5), Width = 80, VerticalContentAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(txtPosHeight, 3);
+            Grid.SetRow(txtPosHeight, 1);
+            coordinatesGrid.Children.Add(txtPosHeight);
+            
+            // Кнопка применения изменений
+            Button btnApplyCoordinates = new Button
+            {
+                Content = "Применить координаты",
+                Margin = new Thickness(5),
+                Padding = new Thickness(10, 5, 10, 5),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            Grid.SetColumnSpan(btnApplyCoordinates, 4);
+            Grid.SetRow(btnApplyCoordinates, 2);
+            coordinatesGrid.Children.Add(btnApplyCoordinates);
+            
+            positionSettingsPanel.Children.Add(coordinatesGrid);
+            
+            // Добавляем обработчик выбора позиции
+            positionSelector.SelectionChanged += (s, ev) =>
+            {
+                if (positionSelector.SelectedIndex >= 0 && _positionRects != null && _positionRects.Count > positionSelector.SelectedIndex)
                 {
-                    _frameTemplateImage.BeginInit();
-                    _frameTemplateImage.UriSource = new Uri(AppSettings.FrameTemplatePath);
-                    _frameTemplateImage.CacheOption = BitmapCacheOption.OnLoad;
-                    _frameTemplateImage.EndInit();
-                }
-                else
-                {
-                    // Создаем пустой фон с разрешением 1200x1800 (соотношение 2:3)
-                    var renderTargetBitmap = new RenderTargetBitmap(1200, 1800, 96, 96, PixelFormats.Pbgra32);
-                    var drawingVisual = new DrawingVisual();
-                    using (var drawingContext = drawingVisual.RenderOpen())
-                    {
-                        drawingContext.DrawRectangle(Brushes.LightGray, null, new Rect(0, 0, 1200, 1800));
-                    }
-                    renderTargetBitmap.Render(drawingVisual);
-                    _frameTemplateImage = new BitmapImage();
-                    var encoder = new PngBitmapEncoder();
-                    encoder.Frames.Add(BitmapFrame.Create(renderTargetBitmap));
-                    using (var memoryStream = new System.IO.MemoryStream())
-                    {
-                        encoder.Save(memoryStream);
-                        memoryStream.Position = 0;
-                        _frameTemplateImage.BeginInit();
-                        _frameTemplateImage.StreamSource = memoryStream;
-                        _frameTemplateImage.CacheOption = BitmapCacheOption.OnLoad;
-                        _frameTemplateImage.EndInit();
-                        _frameTemplateImage.Freeze();
-                    }
-                }
-                
-                // Создаем окно для настройки позиций с уменьшенным размером
-                double scaleFactor = 0.8; // Уменьшаем размер окна на 20%
-                int windowWidth = (int)(_frameTemplateImage.PixelWidth * scaleFactor + 50);
-                int windowHeight = (int)(_frameTemplateImage.PixelHeight * scaleFactor + 100);
-                
-                _positionWindow = new Window
-                {
-                    Title = "Настройка позиций фотографий",
-                    Width = windowWidth,
-                    Height = windowHeight,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Owner = this
-                };
-                
-                // Создаем контейнеры для элементов
-                var mainGrid = new Grid();
-                _positionCanvas = new Canvas
-                {
-                    Width = _frameTemplateImage.PixelWidth * scaleFactor,
-                    Height = _frameTemplateImage.PixelHeight * scaleFactor,
-                    Background = new ImageBrush(_frameTemplateImage) { Stretch = Stretch.Uniform }
-                };
-                
-                var buttonPanel = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    Margin = new Thickness(0, 10, 0, 0)
-                };
-                
-                // Настраиваем сетку
-                mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                
-                // Добавляем элементы в сетку
-                Grid.SetRow(_positionCanvas, 0);
-                Grid.SetRow(buttonPanel, 1);
-                mainGrid.Children.Add(_positionCanvas);
-                mainGrid.Children.Add(buttonPanel);
-                
-                // Создаем только кнопки Сохранить и Отмена
-                var btnSave = new Button { Content = "Сохранить", Margin = new Thickness(5), Padding = new Thickness(10, 5, 10, 5) };
-                var btnCancel = new Button { Content = "Отмена", Margin = new Thickness(5), Padding = new Thickness(10, 5, 10, 5) };
-                
-                buttonPanel.Children.Add(btnSave);
-                buttonPanel.Children.Add(btnCancel);
-                
-                // Инициализируем список прямоугольников
-                _positionRects = new List<PositionRect>();
-                
-                // Создаем позиции в зависимости от количества фотографий
-                // Если есть существующие позиции, используем их (если количество совпадает)
-                if (AppSettings.PhotoPositions != null && AppSettings.PhotoPositions.Count > 0)
-                {
-                    // Создаем новый список с нужным количеством позиций
-                    var newPositions = new List<PhotoPosition>();
+                    var selectedPos = _positionRects[positionSelector.SelectedIndex];
+                    double x = Canvas.GetLeft(selectedPos.Rectangle);
+                    double y = Canvas.GetTop(selectedPos.Rectangle);
                     
-                    // Если существующих позиций больше или равно требуемому количеству, используем первые N
-                    if (AppSettings.PhotoPositions.Count >= photoCount)
-                    {
-                        for (int i = 0; i < photoCount; i++)
-                        {
-                            newPositions.Add(AppSettings.PhotoPositions[i]);
-                        }
-                    }
-                    // Если существующих позиций меньше требуемого количества, добавляем недостающие
-                    else
-                    {
-                        // Добавляем все существующие
-                        newPositions.AddRange(AppSettings.PhotoPositions);
-                        
-                        // Создаем недостающие
-                        int existingCount = AppSettings.PhotoPositions.Count;
-                        for (int i = existingCount; i < photoCount; i++)
-                        {
-                            // Размер и положение новой позиции
-                            double margin = Math.Min(_positionCanvas.Width, _positionCanvas.Height) / 20;
-                            double width = (_positionCanvas.Width - (photoCount + 1) * margin) / photoCount;
-                            double height = width * 1.5; // Соотношение 2:3
-                            double x = margin + i * (width + margin);
-                            double y = (_positionCanvas.Height - height) / 2;
-                            
-                            newPositions.Add(new PhotoPosition
-                            {
-                                X = x / scaleFactor, // Корректируем обратно к оригинальному размеру
-                                Y = y / scaleFactor,
-                                Width = width / scaleFactor,
-                                Height = height / scaleFactor
-                            });
-                        }
-                    }
-                    
-                    // Обновляем список позиций в настройках
-                    AppSettings.PhotoPositions = newPositions;
+                    txtPosX.Text = Math.Round(x).ToString();
+                    txtPosY.Text = Math.Round(y).ToString();
+                    txtPosWidth.Text = Math.Round(selectedPos.Rectangle.Width).ToString();
+                    txtPosHeight.Text = Math.Round(selectedPos.Rectangle.Height).ToString();
                 }
-                else
+            };
+            
+            // Добавляем обработчик изменения координат
+            btnApplyCoordinates.Click += (s, ev) =>
+            {
+                if (positionSelector.SelectedIndex >= 0 && _positionRects != null && _positionRects.Count > positionSelector.SelectedIndex)
                 {
-                    // Если нет существующих позиций, создаем новые
-                    AppSettings.PhotoPositions = new List<PhotoPosition>();
+                    var selectedPos = _positionRects[positionSelector.SelectedIndex];
                     
-                    // Определяем размер и расположение областей в зависимости от количества фотографий
-                    for (int i = 0; i < photoCount; i++)
+                    // Парсим значения
+                    if (double.TryParse(txtPosX.Text, out double x) &&
+                        double.TryParse(txtPosY.Text, out double y) &&
+                        double.TryParse(txtPosWidth.Text, out double width) &&
+                        double.TryParse(txtPosHeight.Text, out double height))
                     {
-                        double margin = Math.Min(_positionCanvas.Width, _positionCanvas.Height) / 20;
-                        double width, height, x, y;
+                        // Применяем ограничения
+                        x = Math.Max(0, Math.Min(x, _positionCanvas.Width - 10));
+                        y = Math.Max(0, Math.Min(y, _positionCanvas.Height - 10));
+                        width = Math.Max(50, Math.Min(width, _positionCanvas.Width - x));
+                        height = Math.Max(50, Math.Min(height, _positionCanvas.Height - y));
                         
-                        switch(photoCount)
-                        {
-                            case 1:
-                                // Одна область на весь кадр с отступами
-                                width = _positionCanvas.Width - 2 * margin;
-                                height = _positionCanvas.Height - 2 * margin;
-                                x = margin;
-                                y = margin;
-                                break;
-                                
-                            case 2:
-                                // Две области вертикально
-                                width = _positionCanvas.Width - 2 * margin;
-                                height = (_positionCanvas.Height - 3 * margin) / 2;
-                                x = margin;
-                                y = margin + i * (height + margin);
-                                break;
-                                
-                            case 3:
-                                // Три области - одна сверху, две снизу
-                                if (i == 0) {
-                                    // Верхняя область на всю ширину
-                                    width = _positionCanvas.Width - 2 * margin;
-                                    height = (_positionCanvas.Height - 3 * margin) / 2;
-                                    x = margin;
-                                    y = margin;
-                                } else {
-                                    // Две нижние области
-                                    width = (_positionCanvas.Width - 3 * margin) / 2;
-                                    height = (_positionCanvas.Height - 3 * margin) / 2;
-                                    x = margin + (i - 1) * (width + margin);
-                                    y = 2 * margin + (_positionCanvas.Height - 3 * margin) / 2;
-                                }
-                                break;
-                                
-                            case 4:
-                            default:
-                                // Четыре области в сетке 2x2
-                                width = (_positionCanvas.Width - 3 * margin) / 2;
-                                height = (_positionCanvas.Height - 3 * margin) / 2;
-                                x = margin + (i % 2) * (width + margin);
-                                y = margin + (i / 2) * (height + margin);
-                                break;
-                        }
+                        // Обновляем позицию и размеры
+                        Canvas.SetLeft(selectedPos.Rectangle, x);
+                        Canvas.SetTop(selectedPos.Rectangle, y);
+                        selectedPos.Rectangle.Width = width;
+                        selectedPos.Rectangle.Height = height;
                         
-                        AppSettings.PhotoPositions.Add(new PhotoPosition
-                        {
-                            X = x / scaleFactor, // Корректируем обратно к оригинальному размеру
-                            Y = y / scaleFactor,
-                            Width = width / scaleFactor,
-                            Height = height / scaleFactor
-                        });
+                        // Обновляем позицию метки с номером
+                        Canvas.SetLeft(selectedPos.NumberLabel, x + width / 2 - 15);
+                        Canvas.SetTop(selectedPos.NumberLabel, y + height / 2 - 15);
+                        
+                        // Обновляем позиции маркеров изменения размера
+                        selectedPos.NotifyPositionChanged();
                     }
+                }
+            };
+            
+            // Создаем панель с кнопками управления
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(10)
+            };
+            Grid.SetRow(buttonPanel, 2);
+            
+            Button btnAddPosition = new Button
+            {
+                Content = "Добавить область",
+                Margin = new Thickness(5),
+                Padding = new Thickness(10, 5, 10, 5)
+            };
+            buttonPanel.Children.Add(btnAddPosition);
+            
+            Button btnRemovePosition = new Button
+            {
+                Content = "Удалить область",
+                Margin = new Thickness(5),
+                Padding = new Thickness(10, 5, 10, 5)
+            };
+            buttonPanel.Children.Add(btnRemovePosition);
+            
+            Button btnSavePositions = new Button
+            {
+                Content = "Сохранить",
+                Margin = new Thickness(5),
+                Padding = new Thickness(10, 5, 10, 5),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#4CAF50")),
+                Foreground = Brushes.White
+            };
+            buttonPanel.Children.Add(btnSavePositions);
+            
+            Button btnCancel = new Button
+            {
+                Content = "Отмена",
+                Margin = new Thickness(5),
+                Padding = new Thickness(10, 5, 10, 5)
+            };
+            buttonPanel.Children.Add(btnCancel);
+            
+            mainGrid.Children.Add(buttonPanel);
+            
+            // Инициализируем список прямоугольников для позиций
+            _positionRects = new List<PositionRect>();
+            
+            // Добавляем существующие позиции, если они есть
+            int positionIndex = 1;
+            if (AppSettings.PhotoPositions != null && AppSettings.PhotoPositions.Count > 0)
+            {
+                foreach (var position in AppSettings.PhotoPositions)
+                {
+                    AddPositionRect(position.X, position.Y, position.Width, position.Height, positionIndex);
+                    positionSelector.Items.Add($"Область {positionIndex}");
+                    positionIndex++;
+                }
+            }
+            
+            // Обработчик добавления новой позиции
+            btnAddPosition.Click += (s, ev) =>
+            {
+                // Вычисляем центр канвы для размещения нового прямоугольника
+                double centerX = _positionCanvas.Width / 2 - 100;
+                double centerY = _positionCanvas.Height / 2 - 100;
+                
+                // Добавляем новый прямоугольник
+                AddPositionRect(centerX, centerY, 200, 200, positionIndex);
+                
+                // Обновляем выпадающий список
+                positionSelector.Items.Add($"Область {positionIndex}");
+                positionSelector.SelectedIndex = positionIndex - 1;
+                
+                positionIndex++;
+            };
+            
+            // Обработчик удаления позиции
+            btnRemovePosition.Click += (s, ev) =>
+            {
+                int selectedIndex = positionSelector.SelectedIndex;
+                if (selectedIndex >= 0 && _positionRects.Count > selectedIndex)
+                {
+                    // Удаляем прямоугольник и его элементы управления
+                    var rect = _positionRects[selectedIndex];
+                    _positionCanvas.Children.Remove(rect.Rectangle);
+                    _positionCanvas.Children.Remove(rect.NumberLabel);
+                    foreach (var thumb in rect.ResizeThumbs)
+                    {
+                        _positionCanvas.Children.Remove(thumb);
+                    }
+                    
+                    _positionRects.RemoveAt(selectedIndex);
+                    
+                    // Обновляем нумерацию
+                    for (int i = selectedIndex; i < _positionRects.Count; i++)
+                    {
+                        _positionRects[i].Number = i + 1;
+                        _positionRects[i].NumberLabel.Text = (i + 1).ToString();
+                    }
+                    
+                    // Обновляем выпадающий список
+                    positionSelector.Items.Clear();
+                    for (int i = 0; i < _positionRects.Count; i++)
+                    {
+                        positionSelector.Items.Add($"Область {i + 1}");
+                    }
+                    
+                    positionSelector.SelectedIndex = Math.Min(selectedIndex, _positionRects.Count - 1);
+                    
+                    // Обновляем индекс для добавления новых позиций
+                    positionIndex = _positionRects.Count + 1;
+                }
+            };
+            
+            // Обработчик сохранения позиций
+            btnSavePositions.Click += (s, ev) =>
+            {
+                // Очищаем текущие позиции фотографий
+                AppSettings.PhotoPositions.Clear();
+                
+                // Сохраняем новые позиции из _positionRects
+                foreach (var posRect in _positionRects)
+                {
+                    double x = Canvas.GetLeft(posRect.Rectangle);
+                    double y = Canvas.GetTop(posRect.Rectangle);
+                    double width = posRect.Rectangle.Width;
+                    double height = posRect.Rectangle.Height;
+                    
+                    AppSettings.PhotoPositions.Add(new PhotoPosition
+                    {
+                        X = x,
+                        Y = y,
+                        Width = width,
+                        Height = height
+                    });
                 }
                 
-                // Отображаем позиции на канве
+                // Логируем сохраненные позиции для отладки
+                System.Diagnostics.Debug.WriteLine($"Сохранены настроенные позиции ({AppSettings.PhotoPositions.Count}):");
                 for (int i = 0; i < AppSettings.PhotoPositions.Count; i++)
                 {
                     var pos = AppSettings.PhotoPositions[i];
-                    // Учитываем масштабирование для отображения
-                    AddPositionRect(pos.X * scaleFactor, pos.Y * scaleFactor, 
-                                    pos.Width * scaleFactor, pos.Height * scaleFactor, i + 1);
+                    System.Diagnostics.Debug.WriteLine($"Позиция {i+1}: X={pos.X}, Y={pos.Y}, Width={pos.Width}, Height={pos.Height}");
                 }
                 
-                // Обработчики для кнопок
-                btnSave.Click += (s, args) =>
-                {
-                    try
-                {
-                    // Сохраняем позиции, учитывая масштабирование обратно к оригинальному размеру
-                    List<PhotoPosition> updatedPositions = new List<PhotoPosition>();
-                    foreach (var rect in _positionRects)
-                    {
-                            double left = Canvas.GetLeft(rect.Rectangle);
-                            double top = Canvas.GetTop(rect.Rectangle);
-                            double width = rect.Rectangle.Width;
-                            double height = rect.Rectangle.Height;
-                            
-                            // Проверяем валидность данных
-                            if (double.IsNaN(left) || double.IsNaN(top) || 
-                                double.IsNaN(width) || double.IsNaN(height) ||
-                                width <= 0 || height <= 0)
-                            {
-                                MessageBox.Show($"Обнаружены некорректные координаты для области {rect.Number}. Пожалуйста, проверьте позиции.", 
-                                    "Предупреждение", MessageBoxButton.OK, MessageBoxImage.Warning);
-                                continue;
-                            }
-                            
-                        updatedPositions.Add(new PhotoPosition
-                        {
-                                X = left / scaleFactor,
-                                Y = top / scaleFactor,
-                                Width = width / scaleFactor,
-                                Height = height / scaleFactor
-                        });
-                    }
-                    
-                        // Проверяем, что у нас есть все необходимые позиции
-                        if (updatedPositions.Count != photoCount)
-                        {
-                            if (MessageBox.Show($"Количество позиций ({updatedPositions.Count}) не соответствует количеству фотографий ({photoCount}). Продолжить сохранение?", 
-                                "Предупреждение", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.No)
-                            {
-                                return;
-                            }
-                        }
-                        
-                        // Обновляем позиции в настройках
-                    AppSettings.PhotoPositions = updatedPositions;
-                    
-                        // Сохраняем настройки немедленно
-                        SaveSettings();
-                        
-                        System.Diagnostics.Debug.WriteLine($"Сохранено {updatedPositions.Count} позиций:");
-                        for (int i = 0; i < updatedPositions.Count; i++)
-                        {
-                            var pos = updatedPositions[i];
-                            System.Diagnostics.Debug.WriteLine($"Позиция {i+1}: X={pos.X}, Y={pos.Y}, Width={pos.Width}, Height={pos.Height}");
-                    }
-                    
-                    _positionWindow.DialogResult = true;
-                    _positionWindow.Close();
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Ошибка при сохранении позиций: {ex.Message}", 
-                            "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-                    }
-                };
-                
-                btnCancel.Click += (s, args) =>
-                {
-                    _positionWindow.DialogResult = false;
-                    _positionWindow.Close();
-                };
-                
-                // Устанавливаем содержимое окна
-                _positionWindow.Content = mainGrid;
-                
-                // Показываем окно
-                bool? result = _positionWindow.ShowDialog();
-                if (result == true)
-                {
-                    MessageBox.Show("Позиции фотографий сохранены", "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-            }
-            catch (Exception ex)
+                // Закрываем окно с результатом true
+                _positionWindow.DialogResult = true;
+                _positionWindow.Close();
+            };
+            
+            // Обработчик отмены
+            btnCancel.Click += (s, ev) =>
             {
-                MessageBox.Show($"Ошибка при настройке позиций: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                _positionWindow.DialogResult = false;
+                _positionWindow.Close();
+            };
+            
+            // Устанавливаем содержимое окна
+            _positionWindow.Content = mainGrid;
+            
+            // Показываем окно
+            bool? result = _positionWindow.ShowDialog();
+            if (result == true)
+            {
+                MessageBox.Show("Позиции фотографий сохранены", "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
         
@@ -1015,9 +1088,17 @@ namespace UnifiedPhotoBooth
                 AppSettings.FrameTemplatePath = txtFrameTemplatePath.Text;
                 
                 // Проверяем, были ли уже настроены позиции фотографий
-                if (AppSettings.PhotoPositions == null || AppSettings.PhotoPositions.Count == 0)
+                if (string.IsNullOrEmpty(AppSettings.FrameTemplatePath) || 
+                    AppSettings.PhotoPositions == null || 
+                    AppSettings.PhotoPositions.Count == 0)
                 {
-                    // Создаем позиции по умолчанию
+                    // Создаем позиции по умолчанию только если они не были настроены
+                    InitializeDefaultPhotoPositions();
+                }
+                else if (AppSettings.PhotoCount != AppSettings.PhotoPositions.Count)
+                {
+                    // Если изменилось количество фотографий, но есть шаблон, пересоздаем позиции
+                    System.Diagnostics.Debug.WriteLine($"Количество фотографий изменилось с {AppSettings.PhotoPositions.Count} на {AppSettings.PhotoCount}. Пересоздаем позиции.");
                     InitializeDefaultPhotoPositions();
                 }
                 
@@ -1048,7 +1129,8 @@ namespace UnifiedPhotoBooth
             try
             {
                 int photoCount = AppSettings.PhotoCount;
-                AppSettings.PhotoPositions = new List<PhotoPosition>();
+                // Очищаем существующие позиции
+                AppSettings.PhotoPositions.Clear();
                 
                 // Определяем размер для шаблона 1200x1800
                 double frameWidth = 1200;
@@ -1057,13 +1139,15 @@ namespace UnifiedPhotoBooth
                 // Параметры отступов
                 double margin = Math.Min(frameWidth, frameHeight) / 20;
                 
+                System.Diagnostics.Debug.WriteLine($"Создаем {photoCount} позиций по умолчанию");
+                
                 // Определяем размер и расположение областей в зависимости от количества фотографий
                 for (int i = 0; i < photoCount; i++)
                 {
                     double width, height, x, y;
                     
                     switch(photoCount)
-            {
+                    {
                         case 1:
                             // Одна область на весь кадр с отступами
                             width = frameWidth - 2 * margin;
@@ -1124,7 +1208,7 @@ namespace UnifiedPhotoBooth
                 }
             }
             catch (Exception ex)
-                    {
+            {
                 System.Diagnostics.Debug.WriteLine($"Ошибка при создании позиций по умолчанию: {ex.Message}");
                 AppSettings.PhotoPositions = new List<PhotoPosition>();
             }
@@ -1142,8 +1226,8 @@ namespace UnifiedPhotoBooth
             {
                 MessageBox.Show($"Ошибка при загрузке настроек: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 AppSettings = new AppSettings();
-                    }
-                }
+            }
+        }
         
         private void SaveSettings()
         {
