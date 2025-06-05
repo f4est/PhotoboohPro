@@ -30,6 +30,53 @@ namespace UnifiedPhotoBooth
         Scale         // Масштабирование с сохранением пропорций
     }
 
+    // Типы текстовых элементов
+    public enum TextElementType
+    {
+        DateTime,     // Дата и время
+        EventName,    // Название события
+        Custom        // Произвольный текст
+    }
+
+    // Класс для хранения информации о текстовом элементе
+    public class TextElement
+    {
+        public bool Enabled { get; set; } = true;           // Включен ли элемент
+        public double X { get; set; }                       // Позиция X
+        public double Y { get; set; }                       // Позиция Y
+        public double FontSize { get; set; } = 1.0;         // Размер шрифта
+        public string Text { get; set; } = "";              // Текст (для Custom)
+        public TextElementType Type { get; set; }           // Тип текстового элемента
+        public string FontColor { get; set; } = "#000000";  // Цвет текста (черный по умолчанию)
+        public string FontFamily { get; set; } = "Arial";   // Шрифт текста (Arial по умолчанию)
+        public bool IsBold { get; set; } = false;           // Жирный текст
+        public bool IsItalic { get; set; } = false;         // Курсив
+        public bool IsUnderline { get; set; } = false;      // Подчеркивание
+        
+        // Конструктор по умолчанию
+        public TextElement() { }
+        
+        // Конструктор с параметрами
+        public TextElement(TextElementType type, double x, double y, double fontSize = 1.0, string fontFamily = "Arial")
+        {
+            Type = type;
+            X = x;
+            Y = y;
+            FontSize = fontSize;
+            FontFamily = fontFamily;
+        }
+    }
+
+    // Класс для отображения текстовых маркеров на канве
+    internal class TextMarker
+    {
+        public TextBlock TextBlock { get; set; }
+        public Rectangle Background { get; set; }
+        public bool IsDragging { get; set; }
+        public System.Windows.Point LastMousePosition { get; set; }
+        public int Index { get; set; }
+    }
+
     public partial class SettingsWindow : Window
     {
         // Статические настройки приложения
@@ -390,24 +437,30 @@ namespace UnifiedPhotoBooth
             _frameTemplateImage.UriSource = new Uri(AppSettings.FrameTemplatePath, UriKind.Absolute);
             _frameTemplateImage.EndInit();
             
-            // Создаем новое окно для настройки позиций
+            // Создаем новое окно с возможностью изменения размера
             _positionWindow = new Window
             {
-                Title = "Настройка позиций фотографий",
-                Owner = this,
-                Width = 1000,
-                Height = 700,
+                Title = "Настройка позиций",
+                Width = Math.Min(1400, SystemParameters.WorkArea.Width * 0.9),
+                Height = Math.Min(900, SystemParameters.WorkArea.Height * 0.9),
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                ResizeMode = ResizeMode.NoResize
+                Owner = this,
+                WindowStyle = WindowStyle.SingleBorderWindow,
+                ResizeMode = ResizeMode.CanResizeWithGrip,
+                MinWidth = 800,
+                MinHeight = 600,
+                Background = new SolidColorBrush(Color.FromRgb(240, 240, 245))
             };
             
             // Создаем Grid для размещения элементов
             Grid mainGrid = new Grid();
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             
-            // Создаем панель для отображения шаблона и настройки позиций
+            // Определяем строки для разделения окна на секции
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2, GridUnitType.Star) }); // Верхняя часть для изображения
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Нижняя часть для настроек
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Строка для кнопок
+            
+            // Создаем канву для отображения шаблона и областей
             Canvas canvas = new Canvas
             {
                 Width = _frameTemplateImage.PixelWidth,
@@ -415,27 +468,939 @@ namespace UnifiedPhotoBooth
                 Background = new ImageBrush(_frameTemplateImage)
             };
             
-            // Создаем ScrollViewer для канвы, если изображение большое
+            // Создаем скроллвьювер для канвы
             ScrollViewer scrollViewer = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = canvas
+                Content = canvas,
+                Margin = new Thickness(10),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(200, 200, 200)),
+                BorderThickness = new Thickness(1),
+                Background = Brushes.White
             };
-            Grid.SetRow(scrollViewer, 0);
-            mainGrid.Children.Add(scrollViewer);
             
-            // Сохраняем ссылку на canvas для дальнейшего использования
+            mainGrid.Children.Add(scrollViewer);
             _positionCanvas = canvas;
             
-            // Панель для числовых настроек позиций
+            // Добавляем вкладки для разделения настроек позиций и текстовых надписей
+            TabControl setupTabControl = new TabControl();
+            Grid.SetRow(setupTabControl, 1);
+            setupTabControl.Margin = new Thickness(10, 5, 10, 5);
+            setupTabControl.BorderThickness = new Thickness(1);
+            setupTabControl.BorderBrush = new SolidColorBrush(Color.FromRgb(200, 200, 220));
+            mainGrid.Children.Add(setupTabControl);
+            
+            // Создаем стиль для TabItem
+            Style tabItemStyle = new Style(typeof(TabItem));
+            tabItemStyle.Setters.Add(new Setter(TabItem.PaddingProperty, new Thickness(15, 8, 15, 8)));
+            tabItemStyle.Setters.Add(new Setter(TabItem.BackgroundProperty, new SolidColorBrush(Color.FromRgb(245, 245, 250))));
+            tabItemStyle.Setters.Add(new Setter(TabItem.ForegroundProperty, new SolidColorBrush(Color.FromRgb(60, 60, 80))));
+            tabItemStyle.Setters.Add(new Setter(TabItem.FontWeightProperty, FontWeights.SemiBold));
+            
+            // Вкладка настроек позиций фотографий
+            TabItem photoPositionsTab = new TabItem 
+            { 
+                Header = "Позиции фотографий", 
+                Style = tabItemStyle
+            };
+            setupTabControl.Items.Add(photoPositionsTab);
+            
+            // Вкладка настроек текстовых надписей
+            TabItem textElementsTab = new TabItem 
+            { 
+                Header = "Текстовые надписи", 
+                Style = tabItemStyle
+            };
+            setupTabControl.Items.Add(textElementsTab);
+            
+            // Создаем панель настроек текстовых элементов с возможностью прокрутки
+            // Создаем Grid для текстовой панели, чтобы контролировать высоту
+            Grid textPanelGrid = new Grid();
+            textPanelGrid.MaxHeight = 350; // Ограничиваем высоту, чтобы не перекрывать картинку
+            
+            ScrollViewer textScrollViewer = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Margin = new Thickness(5)
+            };
+            
+            Border textSettingsBorder = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(250, 250, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(230, 230, 240)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(15, 10, 15, 10)
+            };
+            
+            StackPanel textSettingsPanel = new StackPanel
+            {
+                Orientation = Orientation.Vertical
+            };
+            
+            textSettingsBorder.Child = textSettingsPanel;
+            textScrollViewer.Content = textSettingsBorder;
+            textPanelGrid.Children.Add(textScrollViewer);
+            textElementsTab.Content = textPanelGrid;
+            
+            // Заголовок раздела
+            TextBlock headerTextBlock = new TextBlock
+            {
+                Text = "Управление текстовыми надписями",
+                FontWeight = FontWeights.Bold,
+                FontSize = 14,
+                Margin = new Thickness(0, 0, 0, 15),
+                Foreground = new SolidColorBrush(Color.FromRgb(50, 50, 80))
+            };
+            textSettingsPanel.Children.Add(headerTextBlock);
+            
+            // 1. Настройки даты и времени
+            Border dateTimeBorder = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(220, 220, 230)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 10),
+                Background = new SolidColorBrush(Color.FromRgb(245, 245, 255))
+            };
+            
+            Grid dateTimeGrid = new Grid();
+            dateTimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            dateTimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            dateTimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            dateTimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            dateTimeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            
+            dateTimeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            dateTimeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            // Заголовок и чекбокс
+            TextBlock dateTimeHeader = new TextBlock
+            {
+                Text = "Дата и время:",
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(5)
+            };
+            Grid.SetRow(dateTimeHeader, 0);
+            Grid.SetColumn(dateTimeHeader, 0);
+            dateTimeGrid.Children.Add(dateTimeHeader);
+            
+            CheckBox dateTimeCheckBox = new CheckBox
+            {
+                Content = "Включить",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(5)
+            };
+            Grid.SetRow(dateTimeCheckBox, 0);
+            Grid.SetColumn(dateTimeCheckBox, 1);
+            dateTimeGrid.Children.Add(dateTimeCheckBox);
+            
+            // Размер шрифта
+            TextBlock fontSizeLabel = new TextBlock
+            {
+                Text = "Размер:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(15, 5, 5, 5)
+            };
+            Grid.SetRow(fontSizeLabel, 0);
+            Grid.SetColumn(fontSizeLabel, 2);
+            dateTimeGrid.Children.Add(fontSizeLabel);
+            
+            ComboBox fontSizeCombo = new ComboBox
+            {
+                Width = 60,
+                Margin = new Thickness(5),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            for (double size = 0.5; size <= 3.0; size += 0.25)
+            {
+                fontSizeCombo.Items.Add(size.ToString("0.00"));
+            }
+            fontSizeCombo.SelectedIndex = 2; // 1.0 по умолчанию
+            Grid.SetRow(fontSizeCombo, 0);
+            Grid.SetColumn(fontSizeCombo, 3);
+            dateTimeGrid.Children.Add(fontSizeCombo);
+            
+            // Выбор шрифта
+            TextBlock fontFamilyLabel = new TextBlock
+            {
+                Text = "Шрифт:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(15, 5, 5, 5)
+            };
+            Grid.SetRow(fontFamilyLabel, 0);
+            Grid.SetColumn(fontFamilyLabel, 4);
+            dateTimeGrid.Children.Add(fontFamilyLabel);
+            
+            ComboBox fontFamilyCombo = new ComboBox
+            {
+                Width = 120,
+                Margin = new Thickness(5),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            
+            // Добавляем популярные шрифты
+            var fontFamilies = new[] { "Arial", "Times New Roman", "Calibri", "Segoe UI", "Comic Sans MS", "Tahoma", "Verdana" };
+            foreach (var font in fontFamilies)
+            {
+                fontFamilyCombo.Items.Add(font);
+            }
+            fontFamilyCombo.SelectedIndex = 0; // Arial по умолчанию
+            Grid.SetRow(fontFamilyCombo, 0);
+            Grid.SetColumn(fontFamilyCombo, 5);
+            dateTimeGrid.Children.Add(fontFamilyCombo);
+            
+            // Пример отображения
+            TextBlock previewLabel = new TextBlock
+            {
+                Text = "Пример: " + DateTime.Now.ToString("dd.MM.yyyy HH:mm"),
+                Margin = new Thickness(5),
+                FontStyle = FontStyles.Italic,
+                Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 100))
+            };
+            Grid.SetRow(previewLabel, 1);
+            Grid.SetColumnSpan(previewLabel, 5);
+            dateTimeGrid.Children.Add(previewLabel);
+            
+            dateTimeBorder.Child = dateTimeGrid;
+            textSettingsPanel.Children.Add(dateTimeBorder);
+            
+            // 2. Настройки названия события
+            Border eventNameBorder = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(220, 220, 230)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 10),
+                Background = new SolidColorBrush(Color.FromRgb(245, 245, 255))
+            };
+            
+            Grid eventNameGrid = new Grid();
+            eventNameGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            eventNameGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            eventNameGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            eventNameGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            eventNameGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            
+            eventNameGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            eventNameGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            eventNameGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            // Заголовок и чекбокс
+            TextBlock eventNameHeader = new TextBlock
+            {
+                Text = "Название события:",
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(5)
+            };
+            Grid.SetRow(eventNameHeader, 0);
+            Grid.SetColumn(eventNameHeader, 0);
+            eventNameGrid.Children.Add(eventNameHeader);
+            
+            CheckBox eventNameCheckBox = new CheckBox
+            {
+                Content = "Включить",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(5)
+            };
+            Grid.SetRow(eventNameCheckBox, 0);
+            Grid.SetColumn(eventNameCheckBox, 1);
+            eventNameGrid.Children.Add(eventNameCheckBox);
+            
+            // Размер шрифта
+            TextBlock eventFontSizeLabel = new TextBlock
+            {
+                Text = "Размер:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(15, 5, 5, 5)
+            };
+            Grid.SetRow(eventFontSizeLabel, 0);
+            Grid.SetColumn(eventFontSizeLabel, 2);
+            eventNameGrid.Children.Add(eventFontSizeLabel);
+            
+            ComboBox eventFontSizeCombo = new ComboBox
+            {
+                Width = 60,
+                Margin = new Thickness(5),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            for (double size = 0.5; size <= 3.0; size += 0.25)
+            {
+                eventFontSizeCombo.Items.Add(size.ToString("0.00"));
+            }
+            eventFontSizeCombo.SelectedIndex = 2; // 1.0 по умолчанию
+            Grid.SetRow(eventFontSizeCombo, 0);
+            Grid.SetColumn(eventFontSizeCombo, 3);
+            eventNameGrid.Children.Add(eventFontSizeCombo);
+            
+            // Выбор шрифта
+            TextBlock eventFontFamilyLabel = new TextBlock
+            {
+                Text = "Шрифт:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(15, 5, 5, 5)
+            };
+            Grid.SetRow(eventFontFamilyLabel, 0);
+            Grid.SetColumn(eventFontFamilyLabel, 4);
+            eventNameGrid.Children.Add(eventFontFamilyLabel);
+            
+            ComboBox eventFontFamilyCombo = new ComboBox
+            {
+                Width = 120,
+                Margin = new Thickness(5),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            
+            // Добавляем популярные шрифты
+            foreach (var font in fontFamilies)
+            {
+                eventFontFamilyCombo.Items.Add(font);
+            }
+            eventFontFamilyCombo.SelectedIndex = 0; // Arial по умолчанию
+            Grid.SetRow(eventFontFamilyCombo, 0);
+            Grid.SetColumn(eventFontFamilyCombo, 5);
+            eventNameGrid.Children.Add(eventFontFamilyCombo);
+            
+            // Ввод текста события
+            TextBlock eventTextLabel = new TextBlock
+            {
+                Text = "Текст события:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(5)
+            };
+            Grid.SetRow(eventTextLabel, 1);
+            Grid.SetColumn(eventTextLabel, 0);
+            eventNameGrid.Children.Add(eventTextLabel);
+            
+            TextBox eventTextBox = new TextBox
+            {
+                Margin = new Thickness(5),
+                Height = 25,
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            Grid.SetRow(eventTextBox, 1);
+            Grid.SetColumn(eventTextBox, 1);
+            Grid.SetColumnSpan(eventTextBox, 4);
+            eventNameGrid.Children.Add(eventTextBox);
+            
+            // Пример отображения
+            TextBlock eventPreviewLabel = new TextBlock
+            {
+                Text = "Пример: Название события будет отображаться в верхней части фотографии",
+                Margin = new Thickness(5),
+                FontStyle = FontStyles.Italic,
+                Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 100))
+            };
+            Grid.SetRow(eventPreviewLabel, 2);
+            Grid.SetColumnSpan(eventPreviewLabel, 5);
+            eventNameGrid.Children.Add(eventPreviewLabel);
+            
+            eventNameBorder.Child = eventNameGrid;
+            textSettingsPanel.Children.Add(eventNameBorder);
+            
+            // 3. Пользовательские тексты
+            Border customTextsBorder = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(220, 220, 230)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 10),
+                Background = new SolidColorBrush(Color.FromRgb(245, 245, 255))
+            };
+            
+            StackPanel customTextsPanel = new StackPanel();
+            
+            TextBlock customTextsHeader = new TextBlock
+            {
+                Text = "Произвольные тексты",
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            customTextsPanel.Children.Add(customTextsHeader);
+            
+            // Список существующих текстов
+            TextBlock existingTextsLabel = new TextBlock
+            {
+                Text = "Существующие тексты:",
+                Margin = new Thickness(0, 0, 0, 5)
+            };
+            customTextsPanel.Children.Add(existingTextsLabel);
+            
+            ListView customTextsList = new ListView
+            {
+                Height = 100,
+                Margin = new Thickness(0, 0, 0, 10),
+                BorderThickness = new Thickness(1),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(200, 200, 200))
+            };
+            customTextsPanel.Children.Add(customTextsList);
+            
+            // Кнопки управления текстами
+            StackPanel customTextButtonsPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            
+            Button addTextButton = new Button
+            {
+                Content = "Добавить текст",
+                Padding = new Thickness(10, 5, 10, 5),
+                Margin = new Thickness(0, 0, 10, 0),
+                Background = new SolidColorBrush(Color.FromRgb(76, 175, 80)),
+                Foreground = Brushes.White
+            };
+            customTextButtonsPanel.Children.Add(addTextButton);
+            
+            Button editTextButton = new Button
+            {
+                Content = "Редактировать",
+                Padding = new Thickness(10, 5, 10, 5),
+                Margin = new Thickness(0, 0, 10, 0)
+            };
+            customTextButtonsPanel.Children.Add(editTextButton);
+            
+            Button removeTextButton = new Button
+            {
+                Content = "Удалить",
+                Padding = new Thickness(10, 5, 10, 5),
+                Background = new SolidColorBrush(Color.FromRgb(239, 83, 80)),
+                Foreground = Brushes.White
+            };
+            customTextButtonsPanel.Children.Add(removeTextButton);
+            
+            customTextsPanel.Children.Add(customTextButtonsPanel);
+            
+            // Панель добавления/редактирования текста
+            Border editTextBorder = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(200, 200, 200)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 10),
+                Background = new SolidColorBrush(Color.FromRgb(250, 250, 255)),
+                Visibility = Visibility.Collapsed // Скрыта по умолчанию
+            };
+            
+            // Отображаем визуальный маркер позиции текста на канве
+            List<TextMarker> textMarkers = new List<TextMarker>();
+            
+            Grid editTextGrid = new Grid();
+            editTextGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            editTextGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            editTextGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            
+            editTextGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            editTextGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            editTextGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            
+            // Текст
+            TextBlock customTextLabel = new TextBlock
+            {
+                Text = "Текст:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 5, 10, 5)
+            };
+            Grid.SetRow(customTextLabel, 0);
+            Grid.SetColumn(customTextLabel, 0);
+            editTextGrid.Children.Add(customTextLabel);
+            
+            TextBox customTextBox = new TextBox
+            {
+                Margin = new Thickness(0, 5, 0, 5),
+                Height = 25,
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            Grid.SetRow(customTextBox, 0);
+            Grid.SetColumn(customTextBox, 1);
+            Grid.SetColumnSpan(customTextBox, 2);
+            editTextGrid.Children.Add(customTextBox);
+            
+            // Размер шрифта
+            TextBlock customFontSizeLabel = new TextBlock
+            {
+                Text = "Размер:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 5, 10, 5)
+            };
+            Grid.SetRow(customFontSizeLabel, 1);
+            Grid.SetColumn(customFontSizeLabel, 0);
+            editTextGrid.Children.Add(customFontSizeLabel);
+            
+            ComboBox customFontSizeCombo = new ComboBox
+            {
+                Width = 80,
+                Margin = new Thickness(0, 5, 10, 5),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            for (double size = 0.5; size <= 3.0; size += 0.25)
+            {
+                customFontSizeCombo.Items.Add(size.ToString("0.00"));
+            }
+            customFontSizeCombo.SelectedIndex = 2; // 1.0 по умолчанию
+            Grid.SetRow(customFontSizeCombo, 1);
+            Grid.SetColumn(customFontSizeCombo, 1);
+            editTextGrid.Children.Add(customFontSizeCombo);
+            
+            // Выбор шрифта
+            TextBlock customFontFamilyLabel = new TextBlock
+            {
+                Text = "Шрифт:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 5, 10, 5)
+            };
+            Grid.SetRow(customFontFamilyLabel, 2);
+            Grid.SetColumn(customFontFamilyLabel, 0);
+            editTextGrid.Children.Add(customFontFamilyLabel);
+            
+            ComboBox customFontFamilyCombo = new ComboBox
+            {
+                Width = 120,
+                Margin = new Thickness(0, 5, 10, 5),
+                VerticalContentAlignment = VerticalAlignment.Center
+            };
+            
+            // Добавляем популярные шрифты
+            foreach (var font in fontFamilies)
+            {
+                customFontFamilyCombo.Items.Add(font);
+            }
+            customFontFamilyCombo.SelectedIndex = 0; // Arial по умолчанию
+            Grid.SetRow(customFontFamilyCombo, 2);
+            Grid.SetColumn(customFontFamilyCombo, 1);
+            editTextGrid.Children.Add(customFontFamilyCombo);
+            
+            // Стили шрифта (жирный, курсив, подчеркнутый)
+            StackPanel stylePanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 5, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            
+            // Жирный
+            CheckBox boldCheckBox = new CheckBox
+            {
+                Content = "Жирный",
+                Margin = new Thickness(0, 0, 20, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            stylePanel.Children.Add(boldCheckBox);
+            
+            // Курсив
+            CheckBox italicCheckBox = new CheckBox
+            {
+                Content = "Курсив",
+                Margin = new Thickness(0, 0, 20, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            stylePanel.Children.Add(italicCheckBox);
+            
+            // Подчеркивание
+            CheckBox underlineCheckBox = new CheckBox
+            {
+                Content = "Подчеркнутый",
+                Margin = new Thickness(0, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            stylePanel.Children.Add(underlineCheckBox);
+            
+            Grid.SetRow(stylePanel, 3);
+            Grid.SetColumn(stylePanel, 0);
+            Grid.SetColumnSpan(stylePanel, 3);
+            editTextGrid.Children.Add(stylePanel);
+            
+            // Кнопка сохранения текста
+            Button saveTextButton = new Button
+            {
+                Content = "Сохранить",
+                Padding = new Thickness(10, 5, 10, 5),
+                Margin = new Thickness(0, 10, 0, 0),
+                Background = new SolidColorBrush(Color.FromRgb(66, 135, 245)),
+                Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            Grid.SetRow(saveTextButton, 4);
+            Grid.SetColumn(saveTextButton, 1);
+            Grid.SetColumnSpan(saveTextButton, 2);
+            editTextGrid.Children.Add(saveTextButton);
+            
+            editTextBorder.Child = editTextGrid;
+            customTextsPanel.Children.Add(editTextBorder);
+            
+            customTextsBorder.Child = customTextsPanel;
+            textSettingsPanel.Children.Add(customTextsBorder);
+            
+            // Подключение обработчиков событий
+            // 1. Для даты и времени
+            var dateTimeElement = AppSettings.TextElements.FirstOrDefault(e => e.Type == TextElementType.DateTime);
+            if (dateTimeElement != null)
+            {
+                dateTimeCheckBox.IsChecked = dateTimeElement.Enabled;
+                int fontSizeIndex = fontSizeCombo.Items.IndexOf(dateTimeElement.FontSize.ToString("0.00"));
+                if (fontSizeIndex >= 0)
+                    fontSizeCombo.SelectedIndex = fontSizeIndex;
+            }
+            
+            dateTimeCheckBox.Checked += (s, e) => {
+                if (dateTimeElement != null)
+                    dateTimeElement.Enabled = true;
+            };
+            
+            dateTimeCheckBox.Unchecked += (s, e) => {
+                if (dateTimeElement != null)
+                    dateTimeElement.Enabled = false;
+            };
+            
+            fontSizeCombo.SelectionChanged += (s, e) => {
+                if (dateTimeElement != null && fontSizeCombo.SelectedItem != null)
+                {
+                    if (double.TryParse(fontSizeCombo.SelectedItem.ToString(), out double fontSize))
+                        dateTimeElement.FontSize = fontSize;
+                }
+            };
+            
+            // Обработчик изменения шрифта
+            fontFamilyCombo.SelectionChanged += (s, e) => {
+                if (dateTimeElement != null && fontFamilyCombo.SelectedItem != null)
+                {
+                    dateTimeElement.FontFamily = fontFamilyCombo.SelectedItem.ToString();
+                }
+            };
+            
+            // 2. Для названия события
+            var eventNameElement = AppSettings.TextElements.FirstOrDefault(e => e.Type == TextElementType.EventName);
+            if (eventNameElement != null)
+            {
+                eventNameCheckBox.IsChecked = eventNameElement.Enabled;
+                int fontSizeIndex = eventFontSizeCombo.Items.IndexOf(eventNameElement.FontSize.ToString("0.00"));
+                if (fontSizeIndex >= 0)
+                    eventFontSizeCombo.SelectedIndex = fontSizeIndex;
+                
+                eventTextBox.Text = eventNameElement.Text;
+            }
+            
+            eventNameCheckBox.Checked += (s, e) => {
+                if (eventNameElement != null)
+                    eventNameElement.Enabled = true;
+            };
+            
+            eventNameCheckBox.Unchecked += (s, e) => {
+                if (eventNameElement != null)
+                    eventNameElement.Enabled = false;
+            };
+            
+            eventFontSizeCombo.SelectionChanged += (s, e) => {
+                if (eventNameElement != null && eventFontSizeCombo.SelectedItem != null)
+                {
+                    if (double.TryParse(eventFontSizeCombo.SelectedItem.ToString(), out double fontSize))
+                        eventNameElement.FontSize = fontSize;
+                }
+            };
+            
+            // Обработчик изменения шрифта
+            eventFontFamilyCombo.SelectionChanged += (s, e) => {
+                if (eventNameElement != null && eventFontFamilyCombo.SelectedItem != null)
+                {
+                    eventNameElement.FontFamily = eventFontFamilyCombo.SelectedItem.ToString();
+                }
+            };
+            
+            eventTextBox.TextChanged += (s, e) => {
+                if (eventNameElement != null)
+                    eventNameElement.Text = eventTextBox.Text;
+            };
+            
+            // 3. Для пользовательских текстов
+            var customElements = AppSettings.TextElements.Where(e => e.Type == TextElementType.Custom).ToList();
+            foreach (var customElement in customElements)
+            {
+                customTextsList.Items.Add(customElement.Text);
+            }
+            
+            // Добавление нового текста
+            addTextButton.Click += (s, e) => {
+                editTextBorder.Visibility = Visibility.Visible;
+                customTextBox.Text = "";
+                customFontSizeCombo.SelectedIndex = 2; // 1.0 по умолчанию
+                customTextBox.Tag = null; // Новый текст
+            };
+            
+            // Редактирование выбранного текста
+            editTextButton.Click += (s, e) => {
+                if (customTextsList.SelectedIndex >= 0)
+                {
+                    var selectedIndex = customTextsList.SelectedIndex;
+                    var customTexts = AppSettings.TextElements.Where(el => el.Type == TextElementType.Custom).ToList();
+                    
+                    if (selectedIndex < customTexts.Count)
+                    {
+                        var selectedElement = customTexts[selectedIndex];
+                        
+                        // Загружаем текст
+                        customTextBox.Text = selectedElement.Text;
+                        
+                        // Загружаем размер шрифта
+                        int fontSizeIndex = customFontSizeCombo.Items.IndexOf(selectedElement.FontSize.ToString("0.00"));
+                        if (fontSizeIndex >= 0)
+                            customFontSizeCombo.SelectedIndex = fontSizeIndex;
+                        
+                        // Загружаем шрифт
+                        int fontFamilyIndex = customFontFamilyCombo.Items.IndexOf(selectedElement.FontFamily);
+                        if (fontFamilyIndex >= 0)
+                            customFontFamilyCombo.SelectedIndex = fontFamilyIndex;
+                        
+                        // Загружаем стили текста
+                        boldCheckBox.IsChecked = selectedElement.IsBold;
+                        italicCheckBox.IsChecked = selectedElement.IsItalic;
+                        underlineCheckBox.IsChecked = selectedElement.IsUnderline;
+                        
+                        customTextBox.Tag = selectedIndex; // Сохраняем индекс для редактирования
+                        editTextBorder.Visibility = Visibility.Visible;
+                    }
+                }
+            };
+            
+            // Удаление текста
+            removeTextButton.Click += (s, e) => {
+                if (customTextsList.SelectedIndex >= 0)
+                {
+                    var selectedIndex = customTextsList.SelectedIndex;
+                    var customTexts = AppSettings.TextElements.Where(el => el.Type == TextElementType.Custom).ToList();
+                    
+                    if (selectedIndex < customTexts.Count)
+                    {
+                        var selectedElement = customTexts[selectedIndex];
+                        AppSettings.TextElements.Remove(selectedElement);
+                        customTextsList.Items.RemoveAt(selectedIndex);
+                    }
+                }
+            };
+            
+            // Сохранение текста
+            saveTextButton.Click += (s, e) => {
+                if (string.IsNullOrWhiteSpace(customTextBox.Text))
+                    return;
+                
+                double fontSize = 1.0;
+                if (customFontSizeCombo.SelectedItem != null)
+                {
+                    if (!double.TryParse(customFontSizeCombo.SelectedItem.ToString(), out fontSize))
+                        fontSize = 1.0;
+                }
+                
+                // Получаем выбранный шрифт
+                string fontFamily = "Arial";
+                if (customFontFamilyCombo.SelectedItem != null)
+                {
+                    fontFamily = customFontFamilyCombo.SelectedItem.ToString();
+                }
+                
+                if (customTextBox.Tag == null) // Новый текст
+                {
+                    var newElement = new TextElement
+                    {
+                        Type = TextElementType.Custom,
+                        Text = customTextBox.Text,
+                        FontSize = fontSize,
+                        FontFamily = fontFamily,
+                        X = 20,
+                        Y = 100,
+                        Enabled = true,
+                        IsBold = boldCheckBox.IsChecked == true,
+                        IsItalic = italicCheckBox.IsChecked == true,
+                        IsUnderline = underlineCheckBox.IsChecked == true
+                    };
+                    
+                    AppSettings.TextElements.Add(newElement);
+                    customTextsList.Items.Add(newElement.Text);
+                    
+                    // Добавляем маркер текста на канву
+                    AddTextMarker(newElement, canvas, textMarkers);
+                }
+                else // Редактирование существующего
+                {
+                    int editIndex = (int)customTextBox.Tag;
+                    var customTexts = AppSettings.TextElements.Where(el => el.Type == TextElementType.Custom).ToList();
+                    
+                    if (editIndex < customTexts.Count)
+                    {
+                        // Находим индекс элемента в полном списке текстовых элементов
+                        int actualElementIndex = AppSettings.TextElements.IndexOf(customTexts[editIndex]);
+                        
+                        if (actualElementIndex >= 0)
+                        {
+                            var element = AppSettings.TextElements[actualElementIndex];
+                            element.Text = customTextBox.Text;
+                            element.FontSize = fontSize;
+                            element.FontFamily = fontFamily;
+                            element.IsBold = boldCheckBox.IsChecked == true;
+                            element.IsItalic = italicCheckBox.IsChecked == true;
+                            element.IsUnderline = underlineCheckBox.IsChecked == true;
+                            
+                            customTextsList.Items[editIndex] = element.Text;
+                            
+                            // Обновляем текст в существующем маркере
+                            // Ищем соответствующий маркер по индексу
+                            var markerToUpdate = textMarkers.FirstOrDefault(m => m.Index == actualElementIndex);
+                            if (markerToUpdate != null && markerToUpdate.TextBlock != null)
+                            {
+                                // Удаляем старый маркер
+                                canvas.Children.Remove(markerToUpdate.TextBlock);
+                                canvas.Children.Remove(markerToUpdate.Background);
+                                textMarkers.Remove(markerToUpdate);
+                                
+                                // Добавляем новый маркер с обновленными настройками
+                                AddTextMarker(element, canvas, textMarkers);
+                            }
+                        }
+                    }
+                }
+                
+                // Сохраняем настройки сразу
+                SettingsManager.SaveSettings(AppSettings);
+                
+                editTextBorder.Visibility = Visibility.Collapsed;
+            };
+            
+            // Метод для обновления текстовых маркеров при изменении настроек
+            Action updateTextMarkers = () => {
+                // Очищаем все маркеры
+                foreach (var marker in textMarkers)
+                {
+                    if (marker.TextBlock != null)
+                        canvas.Children.Remove(marker.TextBlock);
+                    if (marker.Background != null)
+                        canvas.Children.Remove(marker.Background);
+                }
+                textMarkers.Clear();
+                
+                // Перерисовываем все текстовые элементы
+                foreach (var textElem in AppSettings.TextElements)
+                {
+                    AddTextMarker(textElem, canvas, textMarkers);
+                }
+                
+                // Сохраняем настройки сразу
+                SettingsManager.SaveSettings(AppSettings);
+            };
+            
+            // Подключаем обновление текстовых маркеров к изменению основных настроек
+            dateTimeCheckBox.Checked += (s, e) => {
+                if (dateTimeElement != null)
+                {
+                    dateTimeElement.Enabled = true;
+                    updateTextMarkers();
+                }
+            };
+            
+            dateTimeCheckBox.Unchecked += (s, e) => {
+                if (dateTimeElement != null)
+                {
+                    dateTimeElement.Enabled = false;
+                    updateTextMarkers();
+                }
+            };
+            
+            fontSizeCombo.SelectionChanged += (s, e) => {
+                if (dateTimeElement != null && fontSizeCombo.SelectedItem != null)
+                {
+                    if (double.TryParse(fontSizeCombo.SelectedItem.ToString(), out double fontSize))
+                    {
+                        dateTimeElement.FontSize = fontSize;
+                        updateTextMarkers();
+                    }
+                }
+            };
+            
+            // Обработчик изменения шрифта
+            fontFamilyCombo.SelectionChanged += (s, e) => {
+                if (dateTimeElement != null && fontFamilyCombo.SelectedItem != null)
+                {
+                    dateTimeElement.FontFamily = fontFamilyCombo.SelectedItem.ToString();
+                    updateTextMarkers();
+                }
+            };
+            
+            // Обновляем обработчики для названия события
+            eventNameCheckBox.Checked += (s, e) => {
+                if (eventNameElement != null)
+                {
+                    eventNameElement.Enabled = true;
+                    updateTextMarkers();
+                }
+            };
+            
+            eventNameCheckBox.Unchecked += (s, e) => {
+                if (eventNameElement != null)
+                {
+                    eventNameElement.Enabled = false;
+                    updateTextMarkers();
+                }
+            };
+            
+            eventFontSizeCombo.SelectionChanged += (s, e) => {
+                if (eventNameElement != null && eventFontSizeCombo.SelectedItem != null)
+                {
+                    if (double.TryParse(eventFontSizeCombo.SelectedItem.ToString(), out double fontSize))
+                    {
+                        eventNameElement.FontSize = fontSize;
+                        updateTextMarkers();
+                    }
+                }
+            };
+            
+            // Обработчик изменения шрифта
+            eventFontFamilyCombo.SelectionChanged += (s, e) => {
+                if (eventNameElement != null && eventFontFamilyCombo.SelectedItem != null)
+                {
+                    eventNameElement.FontFamily = eventFontFamilyCombo.SelectedItem.ToString();
+                    updateTextMarkers();
+                }
+            };
+            
+            eventTextBox.TextChanged += (s, e) => {
+                if (eventNameElement != null)
+                {
+                    eventNameElement.Text = eventTextBox.Text;
+                    updateTextMarkers();
+                }
+            };
+            
+            // Загружаем существующие текстовые элементы
+            if (AppSettings.TextElements != null && AppSettings.TextElements.Count > 0)
+            {
+                foreach (var textElem in AppSettings.TextElements)
+                {
+                    // Добавляем маркер текста на канву
+                    AddTextMarker(textElem, canvas, textMarkers);
+                }
+            }
+            
+            // Создаем панель для настроек позиций фотографий
+            Border positionSettingsBorder = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(250, 250, 255)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(230, 230, 240)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(15, 10, 15, 10),
+                Margin = new Thickness(5)
+            };
+            
             StackPanel positionSettingsPanel = new StackPanel
             {
-                Orientation = Orientation.Vertical,
-                Margin = new Thickness(10)
+                Orientation = Orientation.Vertical
             };
-            Grid.SetRow(positionSettingsPanel, 1);
-            mainGrid.Children.Add(positionSettingsPanel);
+            positionSettingsBorder.Child = positionSettingsPanel;
+            photoPositionsTab.Content = positionSettingsBorder;
             
             // Создаем элементы управления для выбора текущей области
             var positionControlGrid = new Grid();
@@ -1005,8 +1970,18 @@ namespace UnifiedPhotoBooth
         private void BtnClearFrameTemplate_Click(object sender, RoutedEventArgs e)
         {
             AppSettings.FrameTemplatePath = null;
-            AppSettings.PhotoPositions.Clear();
-            MessageBox.Show("Рамка и позиции фотографий очищены", "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
+            txtFrameTemplatePath.Text = "";
+            
+            // Очищаем элементы на UI
+            if (_frameTemplateImage != null)
+            {
+                _frameTemplateImage = null;
+            }
+            
+            // Применяем настройки сразу
+            SettingsManager.SaveSettings(AppSettings);
+            
+            MessageBox.Show("Шаблон рамки очищен", "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         
         private void BtnLoadOverlay_Click(object sender, RoutedEventArgs e)
@@ -1031,6 +2006,164 @@ namespace UnifiedPhotoBooth
             MessageBox.Show("Оверлей очищен", "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         
+        // Метод для добавления текстового маркера на канву
+        private void AddTextMarker(TextElement textElement, Canvas canvas, List<TextMarker> markers)
+        {
+            // Скрываем маркер, если элемент отключен
+            if (!textElement.Enabled && (textElement.Type == TextElementType.DateTime || textElement.Type == TextElementType.EventName))
+            {
+                return;
+            }
+            
+            // Создаем текстовый блок для измерения размеров текста
+            string displayText;
+            switch (textElement.Type)
+            {
+                case TextElementType.DateTime:
+                    displayText = DateTime.Now.ToString("dd.MM.yyyy HH:mm");
+                    break;
+                case TextElementType.EventName:
+                    displayText = !string.IsNullOrEmpty(textElement.Text) ? textElement.Text : "Название события";
+                    break;
+                default:
+                    displayText = textElement.Text;
+                    break;
+            }
+            
+            // Создаем временный текстовый блок для измерения
+            TextBlock measureBlock = new TextBlock
+            {
+                Text = displayText,
+                FontSize = 14 * textElement.FontSize,
+                FontFamily = new FontFamily(textElement.FontFamily),
+                FontWeight = textElement.IsBold ? FontWeights.Bold : FontWeights.Normal,
+                FontStyle = textElement.IsItalic ? FontStyles.Italic : FontStyles.Normal,
+                TextDecorations = textElement.IsUnderline ? TextDecorations.Underline : null,
+                Margin = new Thickness(5)
+            };
+            
+            // Добавляем на канву для измерения
+            canvas.Children.Add(measureBlock);
+            measureBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            
+            // Получаем размеры текста
+            double textWidth = measureBlock.DesiredSize.Width + 10; // Добавляем отступы
+            double textHeight = measureBlock.DesiredSize.Height + 6;
+            
+            // Удаляем временный блок после измерения
+            canvas.Children.Remove(measureBlock);
+            
+            // Создаем фон текста с учетом измеренных размеров
+            Rectangle background = new Rectangle
+            {
+                Width = Math.Max(200, textWidth), // Минимальная ширина 200px
+                Height = Math.Max(30, textHeight), // Минимальная высота 30px
+                Fill = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+                Stroke = new SolidColorBrush(Color.FromArgb(150, 0, 0, 255)),
+                StrokeThickness = 1,
+                RadiusX = 3,
+                RadiusY = 3
+            };
+            
+            // Устанавливаем позицию фона
+            Canvas.SetLeft(background, textElement.X);
+            Canvas.SetTop(background, textElement.Y);
+            
+            // Добавляем на канву
+            canvas.Children.Add(background);
+            
+            // Создаем текстовый блок с правильными настройками
+            TextBlock textBlock = new TextBlock
+            {
+                Text = displayText,
+                FontSize = 14 * textElement.FontSize,
+                FontFamily = new FontFamily(textElement.FontFamily),
+                FontWeight = textElement.IsBold ? FontWeights.Bold : FontWeights.Normal,
+                FontStyle = textElement.IsItalic ? FontStyles.Italic : FontStyles.Normal,
+                TextDecorations = textElement.IsUnderline ? TextDecorations.Underline : null,
+                Margin = new Thickness(5),
+                Foreground = new SolidColorBrush(Color.FromRgb(0, 0, 0)),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            
+            // Устанавливаем позицию текста
+            Canvas.SetLeft(textBlock, textElement.X + 5);
+            Canvas.SetTop(textBlock, textElement.Y + 3);
+            
+            // Добавляем на канву
+            canvas.Children.Add(textBlock);
+            
+            // Найдем индекс текущего элемента в общем списке
+            int elementIndex = AppSettings.TextElements.IndexOf(textElement);
+            
+            // Создаем текстовый маркер
+            TextMarker marker = new TextMarker
+            {
+                TextBlock = textBlock,
+                Background = background,
+                Index = elementIndex >= 0 ? elementIndex : markers.Count,
+                IsDragging = false
+            };
+            
+            // Добавляем возможность перетаскивания
+            background.MouseLeftButtonDown += (s, e) =>
+            {
+                marker.IsDragging = true;
+                marker.LastMousePosition = e.GetPosition(canvas);
+                background.CaptureMouse();
+                e.Handled = true;
+                
+                // Выделяем выбранный элемент
+                background.Stroke = new SolidColorBrush(Color.FromArgb(255, 0, 0, 255));
+                background.StrokeThickness = 2;
+            };
+            
+            background.MouseLeftButtonUp += (s, e) =>
+            {
+                marker.IsDragging = false;
+                background.ReleaseMouseCapture();
+                e.Handled = true;
+                
+                // Снимаем выделение
+                background.Stroke = new SolidColorBrush(Color.FromArgb(150, 0, 0, 255));
+                background.StrokeThickness = 1;
+                
+                // Обновляем позицию в настройках
+                textElement.X = Canvas.GetLeft(background);
+                textElement.Y = Canvas.GetTop(background);
+            };
+            
+            background.MouseMove += (s, e) =>
+            {
+                if (marker.IsDragging)
+                {
+                    var currentPosition = e.GetPosition(canvas);
+                    var deltaX = currentPosition.X - marker.LastMousePosition.X;
+                    var deltaY = currentPosition.Y - marker.LastMousePosition.Y;
+                    
+                    var newLeft = Canvas.GetLeft(background) + deltaX;
+                    var newTop = Canvas.GetTop(background) + deltaY;
+                    
+                    // Ограничиваем позицию границами канвы
+                    newLeft = Math.Max(0, Math.Min(canvas.Width - background.Width, newLeft));
+                    newTop = Math.Max(0, Math.Min(canvas.Height - background.Height, newTop));
+                    
+                    Canvas.SetLeft(background, newLeft);
+                    Canvas.SetTop(background, newTop);
+                    
+                    // Обновляем позицию текста
+                    Canvas.SetLeft(textBlock, newLeft + 5);
+                    Canvas.SetTop(textBlock, newTop + 3);
+                    
+                    marker.LastMousePosition = currentPosition;
+                }
+            };
+            
+            // Добавляем маркер в список
+            markers.Add(marker);
+        }
+        
         private void BtnCancel_Click(object sender, RoutedEventArgs e)
         {
             DialogResult = false;
@@ -1047,42 +2180,20 @@ namespace UnifiedPhotoBooth
                     AppSettings.CameraIndex = cbCameras.SelectedIndex;
                 }
                 
-                if (cbMicrophones.SelectedIndex >= 0 && cbMicrophones.SelectedIndex < NAudio.Wave.WaveIn.DeviceCount)
-                {
-                    AppSettings.MicrophoneIndex = cbMicrophones.SelectedIndex;
-                }
-                
                 AppSettings.RotationMode = ((ComboBoxItem)cbRotation.SelectedItem).Content.ToString();
                 AppSettings.MirrorMode = chkMirrorMode.IsChecked == true;
                 
-                AppSettings.PhotoCount = int.Parse(((ComboBoxItem)cbPhotoCount.SelectedItem).Content.ToString());
-                AppSettings.PhotoCountdownTime = int.Parse(((ComboBoxItem)cbPhotoCountdownTime.SelectedItem).Content.ToString());
-                
-                AppSettings.RecordingDuration = int.Parse(((ComboBoxItem)cbRecordingDuration.SelectedItem).Content.ToString());
-                AppSettings.VideoCountdownTime = int.Parse(((ComboBoxItem)cbVideoCountdownTime.SelectedItem).Content.ToString());
-                
-                // Сохраняем режим обработки фотографий
-                AppSettings.PhotoProcessingMode = (ImageProcessingMode)cbPhotoProcessingMode.SelectedIndex;
-                
-                // Сохраняем настройки принтера
-                if (cbPrinters.SelectedIndex >= 0 && cbPrinters.SelectedItem.ToString() != "Принтеры не найдены")
+                // Получаем значение числа фотографий
+                if (cbPhotoCount.SelectedItem is ComboBoxItem photoCountItem)
                 {
-                    AppSettings.PrinterName = cbPrinters.SelectedItem.ToString();
+                    AppSettings.PhotoCount = Convert.ToInt32(photoCountItem.Content.ToString());
                 }
                 
-                // Сохраняем размеры печати
-                if (double.TryParse(txtPrintWidth.Text, out double printWidth))
+                // Получаем значение времени отсчета для фото
+                if (cbPhotoCountdownTime.SelectedItem is ComboBoxItem photoCountdownItem)
                 {
-                    AppSettings.PrintWidth = printWidth;
+                    AppSettings.PhotoCountdownTime = Convert.ToInt32(photoCountdownItem.Content.ToString());
                 }
-                
-                if (double.TryParse(txtPrintHeight.Text, out double printHeight))
-                {
-                    AppSettings.PrintHeight = printHeight;
-                }
-                
-                // Сохраняем режим обработки для печати
-                AppSettings.PrintProcessingMode = (ImageProcessingMode)cbPrintProcessingMode.SelectedIndex;
                 
                 // Сохраняем путь к шаблону рамки
                 AppSettings.FrameTemplatePath = txtFrameTemplatePath.Text;
@@ -1102,18 +2213,52 @@ namespace UnifiedPhotoBooth
                     InitializeDefaultPhotoPositions();
                 }
                 
+                // Инициализируем текстовые элементы, если их нет
+                if (AppSettings.TextElements == null || AppSettings.TextElements.Count == 0)
+                {
+                    InitializeDefaultTextElements();
+                }
+                
                 // Логируем текущие позиции фотографий
-                System.Diagnostics.Debug.WriteLine($"Текущие позиции фотографий ({AppSettings.PhotoPositions.Count}):");
+                System.Diagnostics.Debug.WriteLine($"Сохранено {AppSettings.PhotoPositions.Count} позиций фотографий:");
                 for (int i = 0; i < AppSettings.PhotoPositions.Count; i++)
                 {
                     var pos = AppSettings.PhotoPositions[i];
                     System.Diagnostics.Debug.WriteLine($"Позиция {i+1}: X={pos.X}, Y={pos.Y}, Width={pos.Width}, Height={pos.Height}");
                 }
                 
-                // Сохраняем настройки
-                SaveSettings();
+                // Сохраняем настройки видео
+                if (cbRecordingDuration.SelectedItem is ComboBoxItem recordingDurationItem)
+                {
+                    AppSettings.RecordingDuration = Convert.ToInt32(recordingDurationItem.Content.ToString());
+                }
                 
-                // Закрываем окно
+                if (cbVideoCountdownTime.SelectedItem is ComboBoxItem videoCountdownItem)
+                {
+                    AppSettings.VideoCountdownTime = Convert.ToInt32(videoCountdownItem.Content.ToString());
+                }
+                
+                // Сохраняем настройки принтера
+                AppSettings.SelectedPrinter = cbPrinters.SelectedValue?.ToString();
+                
+                if (double.TryParse(txtPrintWidth.Text, out double printWidth))
+                {
+                    AppSettings.PrintWidth = printWidth;
+                }
+                
+                if (double.TryParse(txtPrintHeight.Text, out double printHeight))
+                {
+                    AppSettings.PrintHeight = printHeight;
+                }
+                
+                // Сохраняем режимы обработки изображений
+                AppSettings.PhotoProcessingMode = (ImageProcessingMode)cbPhotoProcessingMode.SelectedIndex;
+                AppSettings.PrintProcessingMode = (ImageProcessingMode)cbPrintProcessingMode.SelectedIndex;
+                
+                // Сохраняем настройки
+                SettingsManager.SaveSettings(AppSettings);
+                System.Diagnostics.Debug.WriteLine($"Настройки сохранены успешно. Путь: {SettingsManager.GetSettingsFilePath()}");
+                
                 DialogResult = true;
                 Close();
             }
@@ -1214,129 +2359,102 @@ namespace UnifiedPhotoBooth
             }
         }
         
+        // Метод для инициализации текстовых элементов по умолчанию
+        private void InitializeDefaultTextElements()
+        {
+            try
+            {
+                // Очищаем существующие текстовые элементы
+                AppSettings.TextElements.Clear();
+                
+                // Добавляем элемент даты и времени (внизу слева)
+                AppSettings.TextElements.Add(new TextElement
+                {
+                    Type = TextElementType.DateTime,
+                    X = 20,
+                    Y = 1780, // Внизу (1800 - 20)
+                    FontSize = 1.0,
+                    FontFamily = "Arial",
+                    IsBold = false,
+                    IsItalic = false,
+                    IsUnderline = false,
+                    Enabled = false // По умолчанию отключен
+                });
+                
+                // Добавляем элемент с названием события (вверху слева)
+                AppSettings.TextElements.Add(new TextElement
+                {
+                    Type = TextElementType.EventName,
+                    X = 20,
+                    Y = 40,
+                    FontSize = 1.0,
+                    FontFamily = "Arial",
+                    IsBold = true,  // Название события по умолчанию жирным
+                    IsItalic = false,
+                    IsUnderline = false,
+                    Enabled = false // По умолчанию отключен
+                });
+                
+                System.Diagnostics.Debug.WriteLine($"Созданы текстовые элементы по умолчанию: {AppSettings.TextElements.Count}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка при создании текстовых элементов по умолчанию: {ex.Message}");
+                AppSettings.TextElements = new List<TextElement>();
+            }
+        }
+        
+        // Обновляет состояние элементов управления текстовыми надписями
+        private void UpdateTextElementControls()
+        {
+            // Пустой метод, оставлен для совместимости
+        }
+        
+        // Загружаем настройки в интерфейс
         private void LoadSettings()
         {
             try
             {
-                // Загружаем настройки через менеджер настроек
                 AppSettings = SettingsManager.LoadSettings();
                 System.Diagnostics.Debug.WriteLine($"Настройки загружены успешно. Путь: {SettingsManager.GetSettingsFilePath()}");
+                
+                // Инициализируем текстовые элементы, если их нет
+                if (AppSettings.TextElements == null || AppSettings.TextElements.Count == 0)
+                {
+                    InitializeDefaultTextElements();
+                }
+                
+                // Заполняем интерфейс настроек загруженными значениями
+                RefreshCameraList();
+                
+                cbRotation.SelectedValue = AppSettings.RotationMode;
+                chkMirrorMode.IsChecked = AppSettings.MirrorMode;
+                
+                cbPhotoCount.SelectedValue = AppSettings.PhotoCount.ToString();
+                cbPhotoCountdownTime.SelectedValue = AppSettings.PhotoCountdownTime.ToString();
+                
+                txtFrameTemplatePath.Text = AppSettings.FrameTemplatePath;
+                
+                cbRecordingDuration.SelectedValue = AppSettings.RecordingDuration.ToString();
+                cbVideoCountdownTime.SelectedValue = AppSettings.VideoCountdownTime.ToString();
+                
+                RefreshPrinterList();
+                if (!string.IsNullOrEmpty(AppSettings.SelectedPrinter))
+                {
+                    cbPrinters.SelectedValue = AppSettings.SelectedPrinter;
+                }
+                
+                txtPrintWidth.Text = AppSettings.PrintWidth.ToString();
+                txtPrintHeight.Text = AppSettings.PrintHeight.ToString();
+                
+                cbPhotoProcessingMode.SelectedIndex = (int)AppSettings.PhotoProcessingMode;
+                cbPrintProcessingMode.SelectedIndex = (int)AppSettings.PrintProcessingMode;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при загрузке настроек: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"Ошибка при загрузке настроек: {ex.Message}");
                 AppSettings = new AppSettings();
             }
-        }
-        
-        private void SaveSettings()
-        {
-            try
-            {
-                // Сохраняем настройки через менеджер настроек
-                bool success = SettingsManager.SaveSettings(AppSettings);
-                if (success)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Настройки сохранены успешно. Путь: {SettingsManager.GetSettingsFilePath()}");
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine("Ошибка при сохранении настроек через менеджер настроек");
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка при сохранении настроек: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-        
-        private void BtnTestPrint_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                // Проверяем, выбран ли принтер
-                if (cbPrinters.SelectedIndex < 0 || cbPrinters.SelectedItem.ToString() == "Принтеры не найдены")
-                {
-                    MessageBox.Show("Пожалуйста, выберите принтер", "Предупреждение", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
-                
-                // Создаем диалог печати
-                System.Windows.Controls.PrintDialog printDialog = new System.Windows.Controls.PrintDialog();
-                printDialog.PrintQueue = new System.Printing.PrintQueue(new System.Printing.PrintServer(), cbPrinters.SelectedItem.ToString());
-                
-                // Создаем тестовое изображение
-                System.Windows.Controls.Canvas canvas = new System.Windows.Controls.Canvas();
-                canvas.Width = ConvertCmToPixels(double.Parse(txtPrintWidth.Text));
-                canvas.Height = ConvertCmToPixels(double.Parse(txtPrintHeight.Text));
-                canvas.Background = Brushes.White;
-                
-                // Добавляем текст
-                TextBlock textBlock = new TextBlock();
-                textBlock.Text = "Тестовая печать";
-                textBlock.FontSize = 24;
-                textBlock.Foreground = Brushes.Black;
-                Canvas.SetLeft(textBlock, (canvas.Width - 200) / 2);
-                Canvas.SetTop(textBlock, canvas.Height / 2 - 50);
-                canvas.Children.Add(textBlock);
-                
-                // Добавляем информацию о размерах
-                TextBlock sizeInfo = new TextBlock();
-                sizeInfo.Text = $"Размер: {txtPrintWidth.Text} x {txtPrintHeight.Text} см";
-                sizeInfo.FontSize = 16;
-                sizeInfo.Foreground = Brushes.Black;
-                Canvas.SetLeft(sizeInfo, (canvas.Width - 200) / 2);
-                Canvas.SetTop(sizeInfo, canvas.Height / 2);
-                canvas.Children.Add(sizeInfo);
-                
-                // Рисуем рамку
-                Rectangle border = new Rectangle();
-                border.Width = canvas.Width;
-                border.Height = canvas.Height;
-                border.Stroke = Brushes.Black;
-                border.StrokeThickness = 2;
-                canvas.Children.Add(border);
-                
-                // Рисуем линии по центру
-                Line horizontalLine = new Line();
-                horizontalLine.X1 = 0;
-                horizontalLine.Y1 = canvas.Height / 2;
-                horizontalLine.X2 = canvas.Width;
-                horizontalLine.Y2 = canvas.Height / 2;
-                horizontalLine.Stroke = Brushes.Black;
-                horizontalLine.StrokeThickness = 1;
-                horizontalLine.StrokeDashArray = new DoubleCollection { 5, 5 };
-                canvas.Children.Add(horizontalLine);
-                
-                Line verticalLine = new Line();
-                verticalLine.X1 = canvas.Width / 2;
-                verticalLine.Y1 = 0;
-                verticalLine.X2 = canvas.Width / 2;
-                verticalLine.Y2 = canvas.Height;
-                verticalLine.Stroke = Brushes.Black;
-                verticalLine.StrokeThickness = 1;
-                verticalLine.StrokeDashArray = new DoubleCollection { 5, 5 };
-                canvas.Children.Add(verticalLine);
-                
-                // Отправляем на печать
-                if (printDialog.ShowDialog() == true)
-                {
-                    printDialog.PrintVisual(canvas, "Тестовая печать");
-                    MessageBox.Show("Тестовая страница отправлена на печать", "Информация", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка при тестовой печати: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-        
-        private double ConvertCmToPixels(double cm)
-        {
-            // Разрешение экрана приблизительно 96 DPI
-            const double INCH_TO_CM = 2.54;
-            const double DPI = 96;
-            return cm * DPI / INCH_TO_CM;
         }
     }
     
@@ -1366,6 +2484,10 @@ namespace UnifiedPhotoBooth
         public double PrintWidth { get; set; } = 10.16;  // 4 дюйма = 10.16 см
         public double PrintHeight { get; set; } = 15.24; // 6 дюймов = 15.24 см
         public ImageProcessingMode PrintProcessingMode { get; set; } = ImageProcessingMode.Stretch;
+        
+        // Добавляем список текстовых элементов
+        public List<TextElement> TextElements { get; set; } = new List<TextElement>();
+        public string SelectedPrinter { get; set; }
     }
     
     // Класс для хранения позиции фотографии

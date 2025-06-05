@@ -37,7 +37,7 @@ namespace UnifiedPhotoBooth
                 
                 // Используем атомарную запись через временный файл
                 string tempPath = SettingsFilePath + ".tmp";
-                File.WriteAllText(tempPath, json);
+                File.WriteAllText(tempPath, json, System.Text.Encoding.UTF8);
                 
                 // Проверяем что временный файл создан успешно
                 if (File.Exists(tempPath) && new FileInfo(tempPath).Length > 0)
@@ -75,7 +75,7 @@ namespace UnifiedPhotoBooth
                 }
                 
                 // Читаем JSON из файла
-                string json = File.ReadAllText(SettingsFilePath);
+                string json = File.ReadAllText(SettingsFilePath, System.Text.Encoding.UTF8);
                 
                 // Проверяем, что JSON не пустой
                 if (string.IsNullOrWhiteSpace(json))

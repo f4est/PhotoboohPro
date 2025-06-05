@@ -3,10 +3,26 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
     <UseWPF>true</UseWPF>
-    <ApplicationIcon>Resources\app_icon.ico</ApplicationIcon>
     <Platforms>AnyCPU;x64</Platforms>
-    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>UnifiedPhotoBooth</AssemblyName>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <NeutralLanguage>ru-RU</NeutralLanguage>
+    <StartupObject>UnifiedPhotoBooth.App</StartupObject>
+    <ApplicationIcon>Resources\app_icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Copyright>Upgraded Photobooth Soft</Copyright>
+    <Company>Upgraded Photobooth Soft</Company>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <CharacterSet>Unicode</CharacterSet>
+    <Charset>UTF-8</Charset>
   </PropertyGroup>
 
   <ItemGroup>

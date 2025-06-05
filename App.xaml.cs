@@ -1,5 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Runtime.InteropServices;
 using OpenCvSharp;
@@ -20,6 +28,10 @@ namespace UnifiedPhotoBooth
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+            
+            // Устанавливаем кодировку UTF-8 по умолчанию для корректного отображения русских символов
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            Encoding.UTF8.GetEncoder();
             
             // Проверяем и создаем необходимые директории
             CreateRequiredDirectories();

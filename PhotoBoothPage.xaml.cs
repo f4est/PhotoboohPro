@@ -642,69 +642,169 @@ namespace UnifiedPhotoBooth
                 {
                     // Если шаблона нет, создаем простой коллаж из фотографий
                     // Создаем пустое изображение для коллажа с соблюдением пропорций
-                    result = new Mat(finalHeight, finalWidth, MatType.CV_8UC3, Scalar.White);
+                    result = new Mat(finalHeight, finalWidth, MatType.CV_8UC3, Scalar.Black);
                     
                     // Определяем размер и расположение областей в зависимости от количества фотографий
                     int cols, rows;
                     int photoWidth, photoHeight;
+                    int margin = 10; // Отступ между фотографиями в пикселях
                     
                     if (_capturedPhotos.Count == 1) {
                         cols = 1;
                         rows = 1;
-                        photoWidth = finalWidth;
-                        photoHeight = finalHeight;
+                        photoWidth = finalWidth - 2 * margin;
+                        photoHeight = finalHeight - 2 * margin;
                     }
                     else if (_capturedPhotos.Count == 2) {
                         cols = 1;
                         rows = 2;
-                        photoWidth = finalWidth;
-                        photoHeight = finalHeight / 2;
+                        photoWidth = finalWidth - 2 * margin;
+                        photoHeight = (finalHeight - 3 * margin) / 2;
                     }
                     else if (_capturedPhotos.Count == 3) {
-                        cols = 1;
-                        rows = 3;
-                        photoWidth = finalWidth;
-                        photoHeight = finalHeight / 3;
+                        // Для 3 фотографий: 2 сверху, 1 по центру снизу
+                        cols = 2;
+                        rows = 2;
+                        photoWidth = (finalWidth - 3 * margin) / 2;
+                        photoHeight = (finalHeight - 3 * margin) / 2;
                     }
                     else { // 4 и более фотографий
                         cols = 2;
                         rows = 2;
-                        photoWidth = finalWidth / 2;
-                        photoHeight = finalHeight / 2;
+                        photoWidth = (finalWidth - 3 * margin) / 2;
+                        photoHeight = (finalHeight - 3 * margin) / 2;
                     }
                     
                     // Добавляем фотографии в коллаж
                     for (int i = 0; i < Math.Min(_capturedPhotos.Count, cols * rows); i++) {
-                        int row = i / cols;
-                        int col = i % cols;
+                        int row, col;
                         
-                        var photo = _capturedPhotos[i].Clone();
+                        if (_capturedPhotos.Count == 3 && i == 2) {
+                            // Для третьей фотографии при трех фото - помещаем по центру внизу
+                            row = 1;
+                            col = 0;
+                            // Для центрирования используем более широкое фото
+                            var centerPhotoWidth = finalWidth - 2 * margin;
+                            
+                            var photo = _capturedPhotos[i].Clone();
+                            
+                            // Масштабируем фото до нужного размера
+                            Mat processedPhoto = new Mat();
+                            Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(centerPhotoWidth, photoHeight));
+                            photo.Dispose();
+                            
+                            var centerRoi = new Mat(result, new OpenCvSharp.Rect(
+                                margin, // центрируем по горизонтали
+                                (rows - 1) * photoHeight + rows * margin,
+                                centerPhotoWidth, 
+                                photoHeight));
+                            
+                            processedPhoto.CopyTo(centerRoi);
+                            processedPhoto.Dispose();
+                            continue;
+                        }
+                        else {
+                            // Для обычного расположения
+                            row = i / cols;
+                            col = i % cols;
+                        }
+                        
+                        var regularPhoto = _capturedPhotos[i].Clone();
                         
                         // Масштабируем фото до нужного размера
-                        Mat processedPhoto = new Mat();
-                        Cv2.Resize(photo, processedPhoto, new OpenCvSharp.Size(photoWidth, photoHeight));
-                        photo.Dispose();
+                        Mat processedRegularPhoto = new Mat();
+                        Cv2.Resize(regularPhoto, processedRegularPhoto, new OpenCvSharp.Size(photoWidth, photoHeight));
+                        regularPhoto.Dispose();
                         
                         var resultRoi = new Mat(result, new OpenCvSharp.Rect(
-                            col * photoWidth, 
-                            row * photoHeight, 
+                            col * photoWidth + (col + 1) * margin, 
+                            row * photoHeight + (row + 1) * margin, 
                             photoWidth, 
                             photoHeight));
                         
-                        processedPhoto.CopyTo(resultRoi);
-                        processedPhoto.Dispose();
+                        processedRegularPhoto.CopyTo(resultRoi);
+                        processedRegularPhoto.Dispose();
                     }
                 }
                 
-                // Добавляем дату и название события
-                string dateTime = System.DateTime.Now.ToString("dd.MM.yyyy HH:mm");
-                Cv2.PutText(result, dateTime, new OpenCvSharp.Point(20, result.Height - 20), 
-                            HersheyFonts.HersheyComplexSmall, 1, Scalar.Black, 2);
-                
-                if (!string.IsNullOrEmpty(_eventName))
+                // Добавляем текстовые элементы из настроек
+                var textElements = SettingsWindow.AppSettings.TextElements;
+                if (textElements != null && textElements.Count > 0)
                 {
-                    Cv2.PutText(result, _eventName, new OpenCvSharp.Point(20, 40), 
+                    System.Diagnostics.Debug.WriteLine($"Добавление {textElements.Count} текстовых элементов на коллаж");
+                    
+                    foreach (var textElem in textElements)
+                    {
+                        // Пропускаем отключенные элементы
+                        if (!textElem.Enabled) continue;
+                        
+                        // Формируем текст для отображения
+                        string textToDisplay = "";
+                        
+                        switch (textElem.Type)
+                        {
+                            case TextElementType.DateTime:
+                                textToDisplay = System.DateTime.Now.ToString("dd.MM.yyyy HH:mm");
+                                break;
+                                
+                            case TextElementType.EventName:
+                                if (!string.IsNullOrEmpty(_eventName))
+                                {
+                                    textToDisplay = _eventName;
+                                }
+                                break;
+                                
+                            case TextElementType.Custom:
+                                textToDisplay = textElem.Text;
+                                break;
+                        }
+                        
+                        // Добавляем текст только если он не пустой
+                        if (!string.IsNullOrEmpty(textToDisplay))
+                        {
+                            // Парсим цвет текста (по умолчанию черный)
+                            Scalar textColor = Scalar.Black;
+                            if (!string.IsNullOrEmpty(textElem.FontColor) && textElem.FontColor.StartsWith("#"))
+                            {
+                                try
+                                {
+                                    var color = System.Windows.Media.ColorConverter.ConvertFromString(textElem.FontColor) as System.Windows.Media.Color?;
+                                    if (color.HasValue)
+                                    {
+                                        textColor = new Scalar(color.Value.B, color.Value.G, color.Value.R); // BGR в OpenCV
+                                    }
+                                }
+                                catch
+                                {
+                                    // В случае ошибки используем черный цвет
+                                }
+                            }
+                            
+                            // Отрисовываем текст на коллаже с использованием настраиваемых шрифтов
+                            DrawTextWithCustomFont(
+                                result,
+                                textToDisplay,
+                                textElem,
+                                textColor
+                            );
+                        }
+                    }
+                }
+                else
+                {
+                    // Для обратной совместимости добавляем стандартные надписи, если нет настроенных элементов
+                    System.Diagnostics.Debug.WriteLine("Нет настроенных текстовых элементов, добавляем стандартные надписи");
+                    
+                    // Добавляем дату и название события
+                    string dateTime = System.DateTime.Now.ToString("dd.MM.yyyy HH:mm");
+                    Cv2.PutText(result, dateTime, new OpenCvSharp.Point(20, result.Height - 20), 
                                 HersheyFonts.HersheyComplexSmall, 1, Scalar.Black, 2);
+                    
+                    if (!string.IsNullOrEmpty(_eventName))
+                    {
+                        Cv2.PutText(result, _eventName, new OpenCvSharp.Point(20, 40), 
+                                    HersheyFonts.HersheyComplexSmall, 1, Scalar.Black, 2);
+                    }
                 }
                 
                 // Сохраняем результат
@@ -728,6 +828,110 @@ namespace UnifiedPhotoBooth
                 int width = 1200;
                 int height = 1800;
                 return new Mat(height, width, MatType.CV_8UC3, Scalar.White);
+            }
+        }
+        
+        /// <summary>
+        /// Отрисовывает текст на изображении с учетом настроек шрифта
+        /// </summary>
+        private void DrawTextWithCustomFont(Mat image, string text, TextElement textElem, Scalar color)
+        {
+            try
+            {
+                // Создаем временное изображение с прозрачностью для наложения текста
+                using (var bitmap = new System.Drawing.Bitmap(image.Width, image.Height))
+                {
+                    using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+                    {
+                        // Настраиваем качество отрисовки
+                        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                        
+                        // Определяем стиль шрифта
+                        System.Drawing.FontStyle fontStyle = System.Drawing.FontStyle.Regular;
+                        if (textElem.IsBold) fontStyle |= System.Drawing.FontStyle.Bold;
+                        if (textElem.IsItalic) fontStyle |= System.Drawing.FontStyle.Italic;
+                        if (textElem.IsUnderline) fontStyle |= System.Drawing.FontStyle.Underline;
+                        
+                        // Создаем шрифт с указанными параметрами
+                        using (var font = new System.Drawing.Font(
+                            textElem.FontFamily, 
+                            (float)(14 * textElem.FontSize), // Базовый размер 14px умножаем на масштаб
+                            fontStyle, 
+                            System.Drawing.GraphicsUnit.Pixel))
+                        {
+                            // Преобразуем Scalar (BGR) в Color (RGB)
+                            var drawColor = System.Drawing.Color.FromArgb(
+                                255, // Альфа-канал (непрозрачность)
+                                (int)color[2], // Красный (R из BGR)
+                                (int)color[1], // Зеленый (G из BGR)
+                                (int)color[0]  // Синий (B из BGR)
+                            );
+                            
+                            // Создаем кисть для текста
+                            using (var brush = new System.Drawing.SolidBrush(drawColor))
+                            {
+                                // Отрисовываем текст на точных координатах
+                                graphics.DrawString(text, font, brush, (float)textElem.X, (float)textElem.Y);
+                            }
+                        }
+                    }
+                    
+                    // Конвертируем Bitmap обратно в Mat и накладываем на оригинальное изображение
+                    using (var ms = new MemoryStream())
+                    {
+                        bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                        ms.Position = 0;
+                        byte[] imageData = ms.ToArray();
+                        
+                        using (var textOverlay = Mat.FromImageData(imageData, ImreadModes.Unchanged))
+                        {
+                            // Учитываем возможное различие в каналах
+                            if (textOverlay.Channels() == 4 && image.Channels() == 3)
+                            {
+                                // Обрабатываем прозрачность и накладываем текст
+                                for (int y = 0; y < textOverlay.Height; y++)
+                                {
+                                    for (int x = 0; x < textOverlay.Width; x++)
+                                    {
+                                        var pixel = textOverlay.At<Vec4b>(y, x);
+                                        if (pixel[3] > 0) // Если пиксель не полностью прозрачный
+                                        {
+                                            // Установить пиксель в исходном изображении
+                                            var alpha = pixel[3] / 255.0;
+                                            if (alpha > 0.5) // Пороговое значение для видимого текста
+                                            {
+                                                image.Set(y, x, new Vec3b(pixel[0], pixel[1], pixel[2]));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // Прямое наложение, если формат каналов совпадает
+                                var roi = new Mat(image, new OpenCvSharp.Rect(0, 0, textOverlay.Width, textOverlay.Height));
+                                textOverlay.CopyTo(roi);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ошибка при отрисовке текста: {ex.Message}");
+                
+                // Fallback - использовать стандартный метод
+                Cv2.PutText(
+                    image,
+                    text,
+                    new OpenCvSharp.Point(textElem.X, textElem.Y),
+                    HersheyFonts.HersheySimplex,
+                    textElem.FontSize,
+                    color,
+                    thickness: textElem.IsBold ? 2 : 1,
+                    lineType: LineTypes.AntiAlias
+                );
             }
         }
     }

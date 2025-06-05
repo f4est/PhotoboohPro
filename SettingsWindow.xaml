@@ -7,6 +7,41 @@
         mc:Ignorable="d"
         Title="Настройки" Height="500" Width="600" 
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Window.Resources>
+        <!-- Стиль для современного переключателя (ToggleButton) -->
+        <Style x:Key="ModernToggleButton" TargetType="ToggleButton">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Border" 
+                                Background="#E0E0E0" 
+                                CornerRadius="13" 
+                                Height="26" 
+                                Width="50">
+                            <Grid>
+                                <Ellipse x:Name="Ellipse" 
+                                         Fill="White" 
+                                         Width="20" 
+                                         Height="20" 
+                                         HorizontalAlignment="Left" 
+                                         Margin="3,0,0,0"/>
+                                <ContentPresenter x:Name="Content" 
+                                                  HorizontalAlignment="Center" 
+                                                  VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#4CAF50"/>
+                                <Setter TargetName="Ellipse" Property="Margin" Value="0,0,3,0"/>
+                                <Setter TargetName="Ellipse" Property="HorizontalAlignment" Value="Right"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -174,6 +209,7 @@
                     </StackPanel>
                 </Grid>
             </TabItem>
+            
             <TabItem Header="Принтер">
                 <Grid Margin="10">
                     <Grid.RowDefinitions>
@@ -213,8 +249,7 @@
                     </ComboBox>
                     
                     <Button Content="Тестовая печать" Grid.Row="4" Grid.Column="1" 
-                            Margin="0,10" Padding="10,5" HorizontalAlignment="Left"
-                            Click="BtnTestPrint_Click"/>
+                            Margin="0,10" Padding="10,5" HorizontalAlignment="Left"/>
                 </Grid>
             </TabItem>
         </TabControl>
