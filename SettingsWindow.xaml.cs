@@ -1,15 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Shapes;
-using Microsoft.Win32;
-using System.IO;
-using System.Windows.Controls.Primitives;
 using System.Windows.Media.Imaging;
-using System.Linq;
+using System.Windows.Shapes;
+using System.IO;
+using System.Xml.Serialization;
+using System.Reflection;
+using System.ComponentModel;
+using Microsoft.Win32;
+using System.Windows.Controls.Primitives;
 
 namespace UnifiedPhotoBooth
 {
@@ -94,6 +101,15 @@ namespace UnifiedPhotoBooth
         public SettingsWindow()
         {
             InitializeComponent();
+            
+            // Загружаем настройки при старте, если они есть
+            LoadSettings();
+            
+            // Инициализируем UI элементы на основе настроек
+            InitializeUIFromSettings();
+            
+            // Подписываемся на события для QR-кода
+            InitializeQrCodeEvents();
             
             // Если настройки еще не были инициализированы, инициализируем их
             if (!_isInitialized)
@@ -253,6 +269,206 @@ namespace UnifiedPhotoBooth
             // Устанавливаем текущий режим обработки для отображения в интерфейсе
             cbPhotoProcessingMode.SelectedIndex = (int)AppSettings.PhotoProcessingMode;
             cbPrintProcessingMode.SelectedIndex = (int)AppSettings.PrintProcessingMode;
+            
+            // Инициализация элементов настройки QR-кода
+            sliderQrSize.Value = AppSettings.QrCodeSize;
+            txtQrSize.Text = AppSettings.QrCodeSize.ToString();
+            
+            rectQrBackColor.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(AppSettings.QrBackgroundColor));
+            rectQrForeColor.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(AppSettings.QrForegroundColor));
+            
+            txtQrLogoPath.Text = AppSettings.QrLogoPath;
+            
+            sliderQrLogoSize.Value = AppSettings.QrLogoSize;
+            txtQrLogoSize.Text = $"{AppSettings.QrLogoSize}%";
+            
+            // Обновляем предпросмотр QR-кода
+            UpdateQrPreview();
+        }
+        
+        private void InitializeQrCodeEvents()
+        {
+            // События для размера QR-кода
+            sliderQrSize.ValueChanged += (s, e) => 
+            {
+                int size = (int)sliderQrSize.Value;
+                txtQrSize.Text = size.ToString();
+                UpdateQrPreview();
+            };
+            
+            // События для выбора цвета фона
+            btnQrBackColor.Click += BtnQrBackColor_Click;
+            
+            // События для выбора цвета QR-кода
+            btnQrForeColor.Click += BtnQrForeColor_Click;
+            
+            // События для логотипа
+            btnLoadQrLogo.Click += BtnLoadQrLogo_Click;
+            btnClearQrLogo.Click += BtnClearQrLogo_Click;
+            
+            // События для размера логотипа
+            sliderQrLogoSize.ValueChanged += (s, e) => 
+            {
+                int size = (int)sliderQrLogoSize.Value;
+                txtQrLogoSize.Text = $"{size}%";
+                UpdateQrPreview();
+            };
+        }
+        
+        private void BtnQrBackColor_Click(object sender, RoutedEventArgs e)
+        {
+            System.Windows.Forms.ColorDialog colorDialog = new System.Windows.Forms.ColorDialog();
+            colorDialog.Color = System.Drawing.ColorTranslator.FromHtml(AppSettings.QrBackgroundColor);
+            
+            if (colorDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                // Преобразуем цвет в строку формата #RRGGBB
+                string colorHex = $"#{colorDialog.Color.R:X2}{colorDialog.Color.G:X2}{colorDialog.Color.B:X2}";
+                AppSettings.QrBackgroundColor = colorHex;
+                
+                // Обновляем интерфейс
+                rectQrBackColor.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex));
+                UpdateQrPreview();
+            }
+        }
+        
+        private void BtnQrForeColor_Click(object sender, RoutedEventArgs e)
+        {
+            System.Windows.Forms.ColorDialog colorDialog = new System.Windows.Forms.ColorDialog();
+            colorDialog.Color = System.Drawing.ColorTranslator.FromHtml(AppSettings.QrForegroundColor);
+            
+            if (colorDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                // Преобразуем цвет в строку формата #RRGGBB
+                string colorHex = $"#{colorDialog.Color.R:X2}{colorDialog.Color.G:X2}{colorDialog.Color.B:X2}";
+                AppSettings.QrForegroundColor = colorHex;
+                
+                // Обновляем интерфейс
+                rectQrForeColor.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex));
+                UpdateQrPreview();
+            }
+        }
+        
+        private void BtnLoadQrLogo_Click(object sender, RoutedEventArgs e)
+        {
+            Microsoft.Win32.OpenFileDialog dlg = new Microsoft.Win32.OpenFileDialog();
+            dlg.Filter = "Изображения|*.png;*.jpg;*.jpeg;*.bmp;*.gif";
+            dlg.Title = "Выберите логотип для QR-кода";
+            
+            if (dlg.ShowDialog() == true)
+            {
+                AppSettings.QrLogoPath = dlg.FileName;
+                txtQrLogoPath.Text = dlg.FileName;
+                UpdateQrPreview();
+            }
+        }
+        
+        private void BtnClearQrLogo_Click(object sender, RoutedEventArgs e)
+        {
+            AppSettings.QrLogoPath = "";
+            txtQrLogoPath.Text = "";
+            UpdateQrPreview();
+        }
+        
+        private void UpdateQrPreview()
+        {
+            try
+            {
+                // Создаем временный QR-код для предпросмотра
+                string previewText = "https://example.com/preview";
+                int size = (int)sliderQrSize.Value;
+                int logoSize = (int)sliderQrLogoSize.Value;
+                
+                // Получаем QR-код с нашими настройками
+                var qr = GenerateCustomQrCode(
+                    previewText, 
+                    size,
+                    AppSettings.QrForegroundColor, 
+                    AppSettings.QrBackgroundColor, 
+                    AppSettings.QrLogoPath, 
+                    logoSize);
+                
+                // Преобразуем для отображения
+                BitmapImage bitmapImage = new BitmapImage();
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    qr.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                    ms.Position = 0;
+                    bitmapImage.BeginInit();
+                    bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+                    bitmapImage.StreamSource = ms;
+                    bitmapImage.EndInit();
+                }
+                
+                imgQrPreview.Source = bitmapImage;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при создании предпросмотра QR-кода: {ex.Message}", "Ошибка", 
+                               MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        
+        private System.Drawing.Bitmap GenerateCustomQrCode(string content, int size, string foreColor, string backColor, string logoPath, int logoSizePercent)
+        {
+            // Создаем генератор QR-кода
+            QRCoder.QRCodeGenerator qrGenerator = new QRCoder.QRCodeGenerator();
+            QRCoder.QRCodeData qrCodeData = qrGenerator.CreateQrCode(content, QRCoder.QRCodeGenerator.ECCLevel.H);
+            QRCoder.QRCode qrCode = new QRCoder.QRCode(qrCodeData);
+            
+            // Преобразуем цвета из строк в объекты цветов
+            System.Drawing.Color qrForeColor = System.Drawing.ColorTranslator.FromHtml(foreColor);
+            System.Drawing.Color qrBackColor = System.Drawing.ColorTranslator.FromHtml(backColor);
+            
+            // Создаем QR-код с нашими цветами
+            System.Drawing.Bitmap qrBitmap = qrCode.GetGraphic(20, qrForeColor, qrBackColor, false);
+            
+            // Изменяем размер QR-кода до нужного
+            System.Drawing.Bitmap resizedQrBitmap = new System.Drawing.Bitmap(size, size);
+            using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(resizedQrBitmap))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(qrBitmap, new System.Drawing.Rectangle(0, 0, size, size));
+            }
+            
+            // Если указан путь к логотипу, добавляем его в центр QR-кода
+            if (!string.IsNullOrEmpty(logoPath) && System.IO.File.Exists(logoPath))
+            {
+                try
+                {
+                    // Загружаем логотип
+                    System.Drawing.Bitmap logo = new System.Drawing.Bitmap(logoPath);
+                    
+                    // Определяем размер логотипа в процентах от размера QR-кода
+                    int logoWidth = (int)(size * logoSizePercent / 100.0);
+                    int logoHeight = (int)(size * logoSizePercent / 100.0);
+                    
+                    // Масштабируем логотип до нужного размера
+                    System.Drawing.Bitmap resizedLogo = new System.Drawing.Bitmap(logo, new System.Drawing.Size(logoWidth, logoHeight));
+                    
+                    // Рассчитываем позицию для вставки логотипа в центр QR-кода
+                    int logoX = (size - logoWidth) / 2;
+                    int logoY = (size - logoHeight) / 2;
+                    
+                    // Вставляем логотип в QR-код
+                    using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(resizedQrBitmap))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.DrawImage(resizedLogo, new System.Drawing.Rectangle(logoX, logoY, logoWidth, logoHeight));
+                    }
+                    
+                    // Освобождаем ресурсы
+                    logo.Dispose();
+                    resizedLogo.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Ошибка при добавлении логотипа: {ex.Message}", "Ошибка", 
+                                   MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+            
+            return resizedQrBitmap;
         }
         
         private void RefreshCameraList()
@@ -2175,24 +2391,22 @@ namespace UnifiedPhotoBooth
             try
             {
                 // Сохраняем настройки из интерфейса
-                if (cbCameras.SelectedIndex >= 0 && cbCameras.SelectedIndex < 10)
+                if (cbCameras.SelectedIndex >= 0)
                 {
                     AppSettings.CameraIndex = cbCameras.SelectedIndex;
                 }
                 
-                AppSettings.RotationMode = ((ComboBoxItem)cbRotation.SelectedItem).Content.ToString();
-                AppSettings.MirrorMode = chkMirrorMode.IsChecked == true;
+                AppSettings.RotationMode = cbRotation.SelectedValue?.ToString() ?? "Без поворота";
+                AppSettings.MirrorMode = chkMirrorMode.IsChecked ?? false;
                 
-                // Получаем значение числа фотографий
-                if (cbPhotoCount.SelectedItem is ComboBoxItem photoCountItem)
+                if (int.TryParse(cbPhotoCount.SelectedValue?.ToString(), out int photoCount))
                 {
-                    AppSettings.PhotoCount = Convert.ToInt32(photoCountItem.Content.ToString());
+                    AppSettings.PhotoCount = photoCount;
                 }
                 
-                // Получаем значение времени отсчета для фото
-                if (cbPhotoCountdownTime.SelectedItem is ComboBoxItem photoCountdownItem)
+                if (int.TryParse(cbPhotoCountdownTime.SelectedValue?.ToString(), out int photoCountdownTime))
                 {
-                    AppSettings.PhotoCountdownTime = Convert.ToInt32(photoCountdownItem.Content.ToString());
+                    AppSettings.PhotoCountdownTime = photoCountdownTime;
                 }
                 
                 // Сохраняем путь к шаблону рамки
@@ -2227,19 +2441,26 @@ namespace UnifiedPhotoBooth
                     System.Diagnostics.Debug.WriteLine($"Позиция {i+1}: X={pos.X}, Y={pos.Y}, Width={pos.Width}, Height={pos.Height}");
                 }
                 
-                // Сохраняем настройки видео
-                if (cbRecordingDuration.SelectedItem is ComboBoxItem recordingDurationItem)
+                if (int.TryParse(cbRecordingDuration.SelectedValue?.ToString(), out int recordingDuration))
                 {
-                    AppSettings.RecordingDuration = Convert.ToInt32(recordingDurationItem.Content.ToString());
+                    AppSettings.RecordingDuration = recordingDuration;
                 }
                 
-                if (cbVideoCountdownTime.SelectedItem is ComboBoxItem videoCountdownItem)
+                if (int.TryParse(cbVideoCountdownTime.SelectedValue?.ToString(), out int videoCountdownTime))
                 {
-                    AppSettings.VideoCountdownTime = Convert.ToInt32(videoCountdownItem.Content.ToString());
+                    AppSettings.VideoCountdownTime = videoCountdownTime;
+                }
+                
+                if (cbMicrophones.SelectedIndex >= 0)
+                {
+                    AppSettings.MicrophoneIndex = cbMicrophones.SelectedIndex;
                 }
                 
                 // Сохраняем настройки принтера
-                AppSettings.SelectedPrinter = cbPrinters.SelectedValue?.ToString();
+                if (cbPrinters.SelectedValue != null)
+                {
+                    AppSettings.SelectedPrinter = cbPrinters.SelectedValue.ToString();
+                }
                 
                 if (double.TryParse(txtPrintWidth.Text, out double printWidth))
                 {
@@ -2255,16 +2476,30 @@ namespace UnifiedPhotoBooth
                 AppSettings.PhotoProcessingMode = (ImageProcessingMode)cbPhotoProcessingMode.SelectedIndex;
                 AppSettings.PrintProcessingMode = (ImageProcessingMode)cbPrintProcessingMode.SelectedIndex;
                 
-                // Сохраняем настройки
-                SettingsManager.SaveSettings(AppSettings);
-                System.Diagnostics.Debug.WriteLine($"Настройки сохранены успешно. Путь: {SettingsManager.GetSettingsFilePath()}");
+                // Сохраняем настройки QR-кода
+                AppSettings.QrCodeSize = (int)sliderQrSize.Value;
+                AppSettings.QrLogoSize = (int)sliderQrLogoSize.Value;
+                // Остальные настройки QR-кода (цвета и путь к логотипу) сохраняются при их изменении
                 
-                DialogResult = true;
-                Close();
+                // Сохраняем настройки
+                if (SettingsManager.SaveSettings(AppSettings))
+                {
+                    MessageBox.Show("Настройки успешно сохранены.", "Информация", 
+                                   MessageBoxButton.OK, MessageBoxImage.Information);
+                    
+                    // Закрываем окно настроек
+                    DialogResult = true;
+                }
+                else
+                {
+                    MessageBox.Show("Не удалось сохранить настройки.", "Ошибка", 
+                                   MessageBoxButton.OK, MessageBoxImage.Error);
+                }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при сохранении настроек: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Ошибка при сохранении настроек: {ex.Message}", "Ошибка", 
+                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         
@@ -2488,6 +2723,13 @@ namespace UnifiedPhotoBooth
         // Добавляем список текстовых элементов
         public List<TextElement> TextElements { get; set; } = new List<TextElement>();
         public string SelectedPrinter { get; set; }
+        
+        // Настройки QR-кода
+        public string QrBackgroundColor { get; set; } = "#FFFFFF"; // Белый фон по умолчанию
+        public string QrForegroundColor { get; set; } = "#000000"; // Черный цвет QR-кода по умолчанию
+        public string QrLogoPath { get; set; } = ""; // Путь к логотипу для центра QR-кода
+        public int QrLogoSize { get; set; } = 30; // Размер логотипа в процентах от размера QR-кода (по умолчанию 30%)
+        public int QrCodeSize { get; set; } = 300; // Размер QR-кода в пикселях
     }
     
     // Класс для хранения позиции фотографии

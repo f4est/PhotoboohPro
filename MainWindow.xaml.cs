@@ -1,12 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
+using System.Windows.Shapes;
+using System.IO;
+using OpenCvSharp;
 
 namespace UnifiedPhotoBooth
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow : System.Windows.Window
     {
         private GoogleDriveService _driveService;
         private Dictionary<string, string> _eventFolders;
@@ -112,29 +123,27 @@ namespace UnifiedPhotoBooth
         
         private void BtnNewEvent_Click(object sender, RoutedEventArgs e)
         {
-            // Окно для ввода имени нового события
-            var dialog = new InputDialog("Введите название события:", "Новое событие");
-            if (dialog.ShowDialog() == true)
+            InputDialog inputDialog = new InputDialog("Введите название события:", "Новое событие");
+            if (inputDialog.ShowDialog() == true)
             {
-                string eventName = dialog.Answer;
-                if (!string.IsNullOrWhiteSpace(eventName))
+                string newEventName = inputDialog.Answer.Trim();
+                if (!string.IsNullOrEmpty(newEventName))
                 {
                     try
                     {
-                        string newEventId = _driveService.CreateEvent(eventName);
-                        if (newEventId != null)
+                        // Создаем новое событие
+                        _driveService.CreateEvent(newEventName);
+                        
+                        // Обновляем список событий
+                        RefreshEvents();
+                        
+                        // Выбираем новое событие в списке
+                        for (int i = 0; i < cbEvents.Items.Count; i++)
                         {
-                            MessageBox.Show($"Событие '{eventName}' успешно создано.", "Успех", MessageBoxButton.OK, MessageBoxImage.Information);
-                            RefreshEvents();
-                            
-                            // Выбираем новое событие в комбобоксе
-                            for (int i = 0; i < cbEvents.Items.Count; i++)
+                            if (cbEvents.Items[i].ToString() == newEventName)
                             {
-                                if (cbEvents.Items[i].ToString() == eventName)
-                                {
-                                    cbEvents.SelectedIndex = i;
-                                    break;
-                                }
+                                cbEvents.SelectedIndex = i;
+                                break;
                             }
                         }
                     }
@@ -152,28 +161,32 @@ namespace UnifiedPhotoBooth
             settingsWindow.ShowDialog();
         }
         
-        private void BtnFullscreen_Click(object sender, RoutedEventArgs e)
+        private void BtnGallery_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                ToggleFullscreen();
+                MainFrame.Navigate(new GalleryPage());
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при переключении полноэкранного режима: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Ошибка при открытии галереи: {ex.Message}", "Ошибка", 
+                               MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+        
+        private void BtnFullscreen_Click(object sender, RoutedEventArgs e)
+        {
+            ToggleFullscreen();
         }
         
         private void ToggleFullscreen()
         {
             if (WindowState == WindowState.Maximized && WindowStyle == WindowStyle.None)
             {
-                // Выход из полноэкранного режима
                 ExitFullscreenMode();
             }
             else
             {
-                // Вход в полноэкранный режим
                 EnterFullscreenMode();
             }
             
@@ -182,27 +195,19 @@ namespace UnifiedPhotoBooth
         
         private void EnterFullscreenMode()
         {
+            // Сохраняем текущее состояние окна
             _previousWindowState = WindowState;
+            _windowNormalWidth = Width;
+            _windowNormalHeight = Height;
+            _windowNormalLeft = Left;
+            _windowNormalTop = Top;
             
-            // Сохраняем текущие размеры и положение окна
-            if (WindowState != WindowState.Maximized)
-            {
-                _windowNormalWidth = Width;
-                _windowNormalHeight = Height;
-                _windowNormalLeft = Left;
-                _windowNormalTop = Top;
-            }
-            
-            // Настройки для полноэкранного режима
-            WindowState = WindowState.Normal; // Сначала сбрасываем в нормальное состояние
+            // Меняем стиль окна для полноэкранного режима
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
             
-            // Устанавливаем размер и положение на весь экран
-            Left = 0;
-            Top = 0;
-            Width = SystemParameters.PrimaryScreenWidth;
-            Height = SystemParameters.PrimaryScreenHeight;
+            // Разворачиваем на весь экран
+            WindowState = WindowState.Maximized;
         }
         
         private void ExitFullscreenMode()
@@ -211,14 +216,10 @@ namespace UnifiedPhotoBooth
             WindowStyle = WindowStyle.SingleBorderWindow;
             ResizeMode = ResizeMode.CanResize;
             
-            // Восстанавливаем предыдущее состояние окна
-            if (_previousWindowState == WindowState.Maximized)
+            // Восстанавливаем размер и положение
+            WindowState = _previousWindowState;
+            if (_previousWindowState == WindowState.Normal)
             {
-                WindowState = WindowState.Maximized;
-            }
-            else
-            {
-                WindowState = WindowState.Normal;
                 Width = _windowNormalWidth;
                 Height = _windowNormalHeight;
                 Left = _windowNormalLeft;
@@ -228,16 +229,16 @@ namespace UnifiedPhotoBooth
         
         private void UpdateFullscreenButtonIcon()
         {
-            if (WindowState == WindowState.Maximized && WindowStyle == WindowStyle.None || 
-                (WindowStyle == WindowStyle.None && Width == SystemParameters.PrimaryScreenWidth && Height == SystemParameters.PrimaryScreenHeight))
+            // Обновляем иконку кнопки полноэкранного режима
+            if (WindowState == WindowState.Maximized && WindowStyle == WindowStyle.None)
             {
-                // В полноэкранном режиме
+                // В полноэкранном режиме показываем иконку выхода из него
                 btnFullscreen.Content = "⮽";
                 btnFullscreen.ToolTip = "Выйти из полноэкранного режима (F11)";
             }
             else
             {
-                // В обычном режиме
+                // В обычном режиме показываем иконку входа в полноэкранный режим
                 btnFullscreen.Content = "⛶";
                 btnFullscreen.ToolTip = "Полноэкранный режим (F11)";
             }
@@ -247,14 +248,15 @@ namespace UnifiedPhotoBooth
         {
             base.OnKeyDown(e);
             
-            // Переключение полноэкранного режима по F11
+            // Обработка нажатия клавиши F11 для переключения полноэкранного режима
             if (e.Key == Key.F11)
             {
                 ToggleFullscreen();
                 e.Handled = true;
             }
-            // Выход из полноэкранного режима по Escape
-            else if (e.Key == Key.Escape && WindowStyle == WindowStyle.None)
+            
+            // Обработка нажатия клавиши Escape для выхода из полноэкранного режима
+            if (e.Key == Key.Escape && WindowState == WindowState.Maximized && WindowStyle == WindowStyle.None)
             {
                 ExitFullscreenMode();
                 UpdateFullscreenButtonIcon();
@@ -263,8 +265,7 @@ namespace UnifiedPhotoBooth
         }
     }
     
-    // Простой диалог ввода текста
-    public class InputDialog : Window
+    public class InputDialog : System.Windows.Window
     {
         private TextBox txtAnswer;
         private Button btnDialogOk;
@@ -274,41 +275,65 @@ namespace UnifiedPhotoBooth
         public InputDialog(string question, string title)
         {
             this.Title = title;
-            this.Width = 400;
-            this.Height = 150;
-            this.ResizeMode = ResizeMode.NoResize;
-            this.WindowStartupLocation = WindowStartupLocation.CenterOwner;
             
+            // Создаем элементы диалогового окна
             Grid grid = new Grid();
             grid.Margin = new Thickness(10);
             
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
+            // Определяем строки
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             
-            TextBlock textQuestion = new TextBlock { Text = question, Margin = new Thickness(0, 0, 0, 10) };
-            grid.Children.Add(textQuestion);
-            Grid.SetRow(textQuestion, 0);
+            // Добавляем текст вопроса
+            TextBlock questionText = new TextBlock();
+            questionText.Text = question;
+            questionText.Margin = new Thickness(0, 0, 0, 10);
+            Grid.SetRow(questionText, 0);
+            grid.Children.Add(questionText);
             
-            txtAnswer = new TextBox { Margin = new Thickness(0, 0, 0, 10) };
-            grid.Children.Add(txtAnswer);
+            // Добавляем поле ввода
+            txtAnswer = new TextBox();
+            txtAnswer.Margin = new Thickness(0, 0, 0, 10);
             Grid.SetRow(txtAnswer, 1);
+            grid.Children.Add(txtAnswer);
             
-            btnDialogOk = new Button { Content = "OK", Width = 80, Height = 30, HorizontalAlignment = HorizontalAlignment.Right };
+            // Добавляем кнопки
+            StackPanel buttonsPanel = new StackPanel();
+            buttonsPanel.Orientation = Orientation.Horizontal;
+            buttonsPanel.HorizontalAlignment = HorizontalAlignment.Right;
+            
+            Button btnDialogCancel = new Button();
+            btnDialogCancel.Content = "Отмена";
+            btnDialogCancel.Margin = new Thickness(5, 0, 0, 0);
+            btnDialogCancel.Click += (sender, e) => { this.DialogResult = false; this.Close(); };
+            
+            btnDialogOk = new Button();
+            btnDialogOk.Content = "OK";
+            btnDialogOk.IsDefault = true;
             btnDialogOk.Click += BtnDialogOk_Click;
-            grid.Children.Add(btnDialogOk);
-            Grid.SetRow(btnDialogOk, 2);
             
+            buttonsPanel.Children.Add(btnDialogOk);
+            buttonsPanel.Children.Add(btnDialogCancel);
+            
+            Grid.SetRow(buttonsPanel, 2);
+            grid.Children.Add(buttonsPanel);
+            
+            // Добавляем сетку в окно
             this.Content = grid;
             
-            this.Loaded += (s, e) => txtAnswer.Focus();
-            txtAnswer.KeyDown += (s, e) => { if (e.Key == Key.Enter) { Answer = txtAnswer.Text; DialogResult = true; } };
+            // Настройки окна
+            this.Width = 300;
+            this.SizeToContent = SizeToContent.Height;
+            this.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            this.ResizeMode = ResizeMode.NoResize;
         }
         
         private void BtnDialogOk_Click(object sender, RoutedEventArgs e)
         {
             Answer = txtAnswer.Text;
             DialogResult = true;
+            Close();
         }
     }
 } 

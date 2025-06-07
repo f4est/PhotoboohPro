@@ -569,13 +569,16 @@ namespace UnifiedPhotoBooth
                 if (!string.IsNullOrEmpty(frameTemplatePath) && File.Exists(frameTemplatePath))
                 {
                     // Загружаем шаблон
-                    result = Cv2.ImRead(frameTemplatePath);
+                    Mat frameTemplate = Cv2.ImRead(frameTemplatePath);
                     
                     // Масштабируем шаблон до нужного размера, если необходимо
-                    if (result.Width != finalWidth || result.Height != finalHeight)
+                    if (frameTemplate.Width != finalWidth || frameTemplate.Height != finalHeight)
                     {
-                        Cv2.Resize(result, result, new OpenCvSharp.Size(finalWidth, finalHeight));
+                        Cv2.Resize(frameTemplate, frameTemplate, new OpenCvSharp.Size(finalWidth, finalHeight));
                     }
+                    
+                    // Стандартный подход - фото поверх рамки
+                    result = frameTemplate;
                     
                     // Вставляем фотографии в позиции на шаблоне
                     var positions = SettingsWindow.AppSettings.PhotoPositions;
@@ -594,7 +597,8 @@ namespace UnifiedPhotoBooth
                     
                     for (int i = 0; i < photoCount; i++)
                     {
-                        if (i >= _capturedPhotos.Count) break;
+                        // Дополнительная проверка на выход за границы массива
+                        if (i >= _capturedPhotos.Count || i >= positions.Count) break;
                         
                         var photo = _capturedPhotos[i].Clone(); // Клонируем для безопасности операций
                         var pos = positions[i];
@@ -676,7 +680,11 @@ namespace UnifiedPhotoBooth
                     }
                     
                     // Добавляем фотографии в коллаж
-                    for (int i = 0; i < Math.Min(_capturedPhotos.Count, cols * rows); i++) {
+                    int maxPhotos = Math.Min(_capturedPhotos.Count, cols * rows);
+                    for (int i = 0; i < maxPhotos; i++) {
+                        // Дополнительная проверка на выход за границы массива
+                        if (i >= _capturedPhotos.Count) break;
+                        
                         int row, col;
                         
                         if (_capturedPhotos.Count == 3 && i == 2) {

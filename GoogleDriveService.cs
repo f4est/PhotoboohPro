@@ -221,49 +221,253 @@ namespace UnifiedPhotoBooth
         }
 
         // Загрузка фото
-        public async Task<UploadResult> UploadPhotoAsync(string filePath, string folderName, string eventFolderId = null, bool isPublic = false, string universalFolderId = null)
+        public async Task<UploadResult> UploadPhotoAsync(string filePath, string folderName, string eventFolderId, bool useLastFolder = false, string lastUniversalFolderId = null)
         {
-            string fileName = Path.GetFileName(filePath);
-            
-            if (_isOnline)
+            if (!_isOnline)
             {
-                try
-                {
-                    // Попытка загрузки в Google Drive
-                    return await UploadFileToGoogleDriveAsync(filePath, fileName, folderName, eventFolderId, isPublic, universalFolderId);
-                }
-                catch
-                {
-                    // В случае ошибки переходим в офлайн-режим
-                    _isOnline = false;
-                }
+                return await SaveLocalFileAsync(filePath, folderName);
             }
-
-            // Сохранение файла локально и возврат локального QR-кода
-            return await SaveLocalFileAsync(filePath, folderName);
+            
+            try
+            {
+                string fileName = Path.GetFileName(filePath);
+                
+                // Создаем уникальную индивидуальную папку для фото
+                var individualFolderMetadata = new Google.Apis.Drive.v3.Data.File()
+                {
+                    Name = $"{Path.GetFileNameWithoutExtension(fileName)}_{System.DateTime.Now:yyyyMMdd_HHmmss}",
+                    MimeType = "application/vnd.google-apps.folder",
+                    Parents = new List<string> { UNIVERSAL_FOLDER_ID }
+                };
+                
+                var folderRequest = _driveService.Files.Create(individualFolderMetadata);
+                folderRequest.Fields = "id";
+                var folder = await Task.Run(() => folderRequest.Execute());
+                string folderId = folder.Id;
+                
+                // Загружаем файл в индивидуальную папку
+                var fileMetadataUpload = new Google.Apis.Drive.v3.Data.File()
+                {
+                    Name = fileName,
+                    Parents = new List<string> { folderId }
+                };
+                
+                string universalFileId;
+                using (var stream = new FileStream(filePath, FileMode.Open))
+                {
+                    var uploadRequest = _driveService.Files.Create(fileMetadataUpload, stream, "");
+                    uploadRequest.Fields = "id, webContentLink";
+                    await Task.Run(() => uploadRequest.Upload());
+                    
+                    var uploadedFile = uploadRequest.ResponseBody;
+                    universalFileId = uploadedFile.Id;
+                    
+                    // Устанавливаем публичные разрешения на файл
+                    var permissionRequest = _driveService.Permissions.Create(
+                        new Google.Apis.Drive.v3.Data.Permission()
+                        {
+                            Type = "anyone",
+                            Role = "reader"
+                        },
+                        uploadedFile.Id);
+                    await Task.Run(() => permissionRequest.Execute());
+                    
+                    // Устанавливаем публичные разрешения на папку
+                    var folderPermissionRequest = _driveService.Permissions.Create(
+                        new Google.Apis.Drive.v3.Data.Permission()
+                        {
+                            Type = "anyone",
+                            Role = "reader"
+                        },
+                        folderId);
+                    await Task.Run(() => folderPermissionRequest.Execute());
+                }
+                
+                // Также копируем файл в общую папку события, если она задана
+                if (!string.IsNullOrEmpty(eventFolderId))
+                {
+                    var eventFileMetadata = new Google.Apis.Drive.v3.Data.File()
+                    {
+                        Name = fileName,
+                        Parents = new List<string> { eventFolderId }
+                    };
+                    
+                    using (var stream = new FileStream(filePath, FileMode.Open))
+                    {
+                        var eventUploadRequest = _driveService.Files.Create(eventFileMetadata, stream, "");
+                        await Task.Run(() => eventUploadRequest.Upload());
+                    }
+                }
+                
+                // Создаем QR-код для папки, а не для отдельного файла
+                string qrUrl = $"https://drive.google.com/drive/folders/{folderId}";
+                Bitmap qrCode = GenerateQrCode(qrUrl);
+                
+                // Сохраняем QR-код в локальный файл
+                string qrFilePath = SaveQrCodeToFile(qrCode, filePath, fileName);
+                
+                // Загружаем QR-код в ту же папку Google Drive
+                var qrFileMetadata = new Google.Apis.Drive.v3.Data.File()
+                {
+                    Name = Path.GetFileName(qrFilePath),
+                    Parents = new List<string> { folderId }
+                };
+                
+                using (var stream = new FileStream(qrFilePath, FileMode.Open))
+                {
+                    var qrUploadRequest = _driveService.Files.Create(qrFileMetadata, stream, "image/png");
+                    await Task.Run(() => qrUploadRequest.Upload());
+                }
+                
+                return new UploadResult
+                {
+                    FileId = universalFileId,
+                    FolderId = folderId,
+                    QrCode = qrCode,
+                    Url = qrUrl
+                };
+            }
+            catch (Exception ex)
+            {
+                // Логирование ошибки
+                Console.WriteLine($"Ошибка при загрузке фото: {ex.Message}");
+                
+                // В случае ошибки создаем QR-код с сообщением об ошибке
+                Bitmap qrCode = GenerateQrCode("Ошибка загрузки: " + ex.Message.Substring(0, Math.Min(50, ex.Message.Length)));
+                
+                return new UploadResult
+                {
+                    FileId = null,
+                    FolderId = null,
+                    QrCode = qrCode,
+                    Url = "Ошибка загрузки"
+                };
+            }
         }
 
         // Загрузка видео
-        public async Task<UploadResult> UploadVideoAsync(string filePath, string folderName, string eventFolderId = null, bool isPublic = false, string universalFolderId = null)
+        public async Task<UploadResult> UploadVideoAsync(string filePath, string folderName, string eventFolderId, bool useLastFolder = false, string lastUniversalFolderId = null)
         {
-            string fileName = Path.GetFileName(filePath);
-            
-            if (_isOnline)
+            if (!_isOnline)
             {
-                try
-                {
-                    // Попытка загрузки в Google Drive
-                    return await UploadFileToGoogleDriveAsync(filePath, fileName, folderName, eventFolderId, isPublic, universalFolderId);
-                }
-                catch
-                {
-                    // В случае ошибки переходим в офлайн-режим
-                    _isOnline = false;
-                }
+                return await SaveLocalFileAsync(filePath, folderName);
             }
-
-            // Сохранение файла локально и возврат локального QR-кода
-            return await SaveLocalFileAsync(filePath, folderName);
+            
+            try
+            {
+                string fileName = Path.GetFileName(filePath);
+                
+                // Создаем уникальную индивидуальную папку для видео
+                var individualFolderMetadata = new Google.Apis.Drive.v3.Data.File()
+                {
+                    Name = $"{Path.GetFileNameWithoutExtension(fileName)}_{System.DateTime.Now:yyyyMMdd_HHmmss}",
+                    MimeType = "application/vnd.google-apps.folder",
+                    Parents = new List<string> { UNIVERSAL_FOLDER_ID }
+                };
+                
+                var folderRequest = _driveService.Files.Create(individualFolderMetadata);
+                folderRequest.Fields = "id";
+                var folder = await Task.Run(() => folderRequest.Execute());
+                string folderId = folder.Id;
+                
+                // Загружаем файл в индивидуальную папку
+                var fileMetadataUpload = new Google.Apis.Drive.v3.Data.File()
+                {
+                    Name = fileName,
+                    Parents = new List<string> { folderId }
+                };
+                
+                string universalFileId;
+                using (var stream = new FileStream(filePath, FileMode.Open))
+                {
+                    var uploadRequest = _driveService.Files.Create(fileMetadataUpload, stream, "video/mp4");
+                    uploadRequest.Fields = "id, webContentLink";
+                    await Task.Run(() => uploadRequest.Upload());
+                    
+                    var uploadedFile = uploadRequest.ResponseBody;
+                    universalFileId = uploadedFile.Id;
+                    
+                    // Устанавливаем публичные разрешения на файл
+                    var permissionRequest = _driveService.Permissions.Create(
+                        new Google.Apis.Drive.v3.Data.Permission()
+                        {
+                            Type = "anyone",
+                            Role = "reader"
+                        },
+                        uploadedFile.Id);
+                    await Task.Run(() => permissionRequest.Execute());
+                    
+                    // Устанавливаем публичные разрешения на папку
+                    var folderPermissionRequest = _driveService.Permissions.Create(
+                        new Google.Apis.Drive.v3.Data.Permission()
+                        {
+                            Type = "anyone",
+                            Role = "reader"
+                        },
+                        folderId);
+                    await Task.Run(() => folderPermissionRequest.Execute());
+                }
+                
+                // Также копируем файл в общую папку события, если она задана
+                if (!string.IsNullOrEmpty(eventFolderId))
+                {
+                    var eventFileMetadata = new Google.Apis.Drive.v3.Data.File()
+                    {
+                        Name = fileName,
+                        Parents = new List<string> { eventFolderId }
+                    };
+                    
+                    using (var stream = new FileStream(filePath, FileMode.Open))
+                    {
+                        var eventUploadRequest = _driveService.Files.Create(eventFileMetadata, stream, "video/mp4");
+                        await Task.Run(() => eventUploadRequest.Upload());
+                    }
+                }
+                
+                // Создаем QR-код для папки, а не для отдельного файла
+                string qrUrl = $"https://drive.google.com/drive/folders/{folderId}";
+                Bitmap qrCode = GenerateQrCode(qrUrl);
+                
+                // Сохраняем QR-код в локальный файл
+                string qrFilePath = SaveQrCodeToFile(qrCode, filePath, fileName);
+                
+                // Загружаем QR-код в ту же папку Google Drive
+                var qrFileMetadata = new Google.Apis.Drive.v3.Data.File()
+                {
+                    Name = Path.GetFileName(qrFilePath),
+                    Parents = new List<string> { folderId }
+                };
+                
+                using (var stream = new FileStream(qrFilePath, FileMode.Open))
+                {
+                    var qrUploadRequest = _driveService.Files.Create(qrFileMetadata, stream, "image/png");
+                    await Task.Run(() => qrUploadRequest.Upload());
+                }
+                
+                return new UploadResult
+                {
+                    FileId = universalFileId,
+                    FolderId = folderId,
+                    QrCode = qrCode,
+                    Url = qrUrl
+                };
+            }
+            catch (Exception ex)
+            {
+                // Логирование ошибки
+                Console.WriteLine($"Ошибка при загрузке видео: {ex.Message}");
+                
+                // В случае ошибки создаем QR-код с сообщением об ошибке
+                Bitmap qrCode = GenerateQrCode("Ошибка загрузки: " + ex.Message.Substring(0, Math.Min(50, ex.Message.Length)));
+                
+                return new UploadResult
+                {
+                    FileId = null,
+                    FolderId = null,
+                    QrCode = qrCode,
+                    Url = "Ошибка загрузки"
+                };
+            }
         }
 
         // Загрузка файла в Google Drive
@@ -341,6 +545,9 @@ namespace UnifiedPhotoBooth
                     string qrUrl = $"https://drive.google.com/file/d/{uploadedFile.Id}/view";
                     Bitmap qrCode = GenerateQrCode(qrUrl);
                     
+                    // Сохранение QR-кода в файл
+                    string qrFilePath = SaveQrCodeToFile(qrCode, filePath, fileName);
+                    
                     // Возвращаем результат загрузки
                     return new UploadResult
                     {
@@ -403,6 +610,9 @@ namespace UnifiedPhotoBooth
                 string localUrl = $"file:///{targetPath.Replace('\\', '/')}";
                 Bitmap qrCode = GenerateQrCode(localUrl);
                 
+                // Сохранение QR-кода в файл
+                string qrFilePath = SaveQrCodeToFile(qrCode, filePath, fileName);
+                
                 // Возвращаем результат с локальным путем
                 return new UploadResult
                 {
@@ -430,21 +640,82 @@ namespace UnifiedPhotoBooth
         // Генерация QR-кода
         private Bitmap GenerateQrCode(string content)
         {
-            var barcodeWriter = new BarcodeWriter<Bitmap>
+            // Получаем настройки QR-кода из SettingsWindow
+            var appSettings = SettingsWindow.AppSettings;
+            
+            // Создаем генератор QR-кода
+            QRCoder.QRCodeGenerator qrGenerator = new QRCoder.QRCodeGenerator();
+            QRCoder.QRCodeData qrCodeData = qrGenerator.CreateQrCode(content, QRCoder.QRCodeGenerator.ECCLevel.H);
+            QRCoder.QRCode qrCode = new QRCoder.QRCode(qrCodeData);
+            
+            // Преобразуем цвета из строк в объекты цветов
+            System.Drawing.Color qrForeColor = System.Drawing.ColorTranslator.FromHtml(appSettings.QrForegroundColor);
+            System.Drawing.Color qrBackColor = System.Drawing.ColorTranslator.FromHtml(appSettings.QrBackgroundColor);
+            
+            // Создаем QR-код с настраиваемыми цветами
+            Bitmap qrBitmap = qrCode.GetGraphic(20, qrForeColor, qrBackColor, false);
+            
+            // Изменяем размер QR-кода до настраиваемого
+            int size = appSettings.QrCodeSize;
+            Bitmap resizedQrBitmap = new Bitmap(size, size);
+            using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(resizedQrBitmap))
             {
-                Format = BarcodeFormat.QR_CODE,
-                Options = new EncodingOptions
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(qrBitmap, new System.Drawing.Rectangle(0, 0, size, size));
+            }
+            
+            // Если указан путь к логотипу и файл существует, добавляем логотип в центр QR-кода
+            string logoPath = appSettings.QrLogoPath;
+            if (!string.IsNullOrEmpty(logoPath) && System.IO.File.Exists(logoPath))
+            {
+                try
                 {
-                    Height = 300,
-                    Width = 300,
-                    Margin = 1,
-                },
-                Renderer = new BitmapRenderer()
-            };
+                    // Загружаем логотип
+                    Bitmap logo = new Bitmap(logoPath);
+                    
+                    // Определяем размер логотипа в процентах от размера QR-кода
+                    int logoSizePercent = appSettings.QrLogoSize;
+                    int logoWidth = (int)(size * logoSizePercent / 100.0);
+                    int logoHeight = (int)(size * logoSizePercent / 100.0);
+                    
+                    // Масштабируем логотип до нужного размера
+                    Bitmap resizedLogo = new Bitmap(logo, new System.Drawing.Size(logoWidth, logoHeight));
+                    
+                    // Рассчитываем позицию для вставки логотипа в центр QR-кода
+                    int logoX = (size - logoWidth) / 2;
+                    int logoY = (size - logoHeight) / 2;
+                    
+                    // Вставляем логотип в QR-код
+                    using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(resizedQrBitmap))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.DrawImage(resizedLogo, new System.Drawing.Rectangle(logoX, logoY, logoWidth, logoHeight));
+                    }
+                    
+                    // Освобождаем ресурсы
+                    logo.Dispose();
+                    resizedLogo.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка при добавлении логотипа: {ex.Message}");
+                }
+            }
             
-            barcodeWriter.Options.Hints.Add(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.H);
+            return resizedQrBitmap;
+        }
+        
+        // Сохранение QR-кода в файл
+        private string SaveQrCodeToFile(Bitmap qrCode, string basePath, string fileName)
+        {
+            // Создаем путь для QR-кода в той же директории, что и оригинальный файл
+            string qrFilePath = Path.Combine(Path.GetDirectoryName(basePath), 
+                                           Path.GetFileNameWithoutExtension(fileName) + "_qr.png");
             
-            return barcodeWriter.Write(content);
+            // Сохраняем QR-код в файл
+            qrCode.Save(qrFilePath, System.Drawing.Imaging.ImageFormat.Png);
+            
+            return qrFilePath;
         }
     }
 
