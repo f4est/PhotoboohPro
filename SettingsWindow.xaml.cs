@@ -2396,15 +2396,26 @@ namespace UnifiedPhotoBooth
                     AppSettings.CameraIndex = cbCameras.SelectedIndex;
                 }
                 
-                AppSettings.RotationMode = cbRotation.SelectedValue?.ToString() ?? "Без поворота";
-                AppSettings.MirrorMode = chkMirrorMode.IsChecked ?? false;
-                
-                if (int.TryParse(cbPhotoCount.SelectedValue?.ToString(), out int photoCount))
+                // Получаем значение RotationMode из ComboBox
+                if (cbRotation.SelectedItem != null)
                 {
-                    AppSettings.PhotoCount = photoCount;
+                    AppSettings.RotationMode = ((ComboBoxItem)cbRotation.SelectedItem).Content.ToString();
+                }
+                else
+                {
+                    AppSettings.RotationMode = "Без поворота";
                 }
                 
-                if (int.TryParse(cbPhotoCountdownTime.SelectedValue?.ToString(), out int photoCountdownTime))
+                AppSettings.MirrorMode = chkMirrorMode.IsChecked ?? false;
+                
+                int photoCount = 4; // Значение по умолчанию
+                if (cbPhotoCount.SelectedItem != null && int.TryParse(((ComboBoxItem)cbPhotoCount.SelectedItem).Content.ToString(), out int parsedPhotoCount))
+                {
+                    photoCount = parsedPhotoCount;
+                }
+                AppSettings.PhotoCount = photoCount;
+                
+                if (cbPhotoCountdownTime.SelectedItem != null && int.TryParse(((ComboBoxItem)cbPhotoCountdownTime.SelectedItem).Content.ToString(), out int photoCountdownTime))
                 {
                     AppSettings.PhotoCountdownTime = photoCountdownTime;
                 }
@@ -2441,12 +2452,12 @@ namespace UnifiedPhotoBooth
                     System.Diagnostics.Debug.WriteLine($"Позиция {i+1}: X={pos.X}, Y={pos.Y}, Width={pos.Width}, Height={pos.Height}");
                 }
                 
-                if (int.TryParse(cbRecordingDuration.SelectedValue?.ToString(), out int recordingDuration))
+                if (cbRecordingDuration.SelectedItem != null && int.TryParse(((ComboBoxItem)cbRecordingDuration.SelectedItem).Content.ToString(), out int recordingDuration))
                 {
                     AppSettings.RecordingDuration = recordingDuration;
                 }
                 
-                if (int.TryParse(cbVideoCountdownTime.SelectedValue?.ToString(), out int videoCountdownTime))
+                if (cbVideoCountdownTime.SelectedItem != null && int.TryParse(((ComboBoxItem)cbVideoCountdownTime.SelectedItem).Content.ToString(), out int videoCountdownTime))
                 {
                     AppSettings.VideoCountdownTime = videoCountdownTime;
                 }
@@ -2659,19 +2670,129 @@ namespace UnifiedPhotoBooth
                     InitializeDefaultTextElements();
                 }
                 
+                // Проверяем соответствие количества позиций количеству фотографий
+                if (AppSettings.PhotoPositions != null && 
+                    AppSettings.PhotoPositions.Count > 0 && 
+                    AppSettings.PhotoPositions.Count != AppSettings.PhotoCount)
+                {
+                    // Если количество позиций не соответствует количеству фотографий, 
+                    // обновляем количество фотографий до количества позиций или пересоздаем позиции
+                    if (AppSettings.PhotoPositions.Count >= 1 && AppSettings.PhotoPositions.Count <= 4)
+                    {
+                        // Если количество позиций валидное (1-4), устанавливаем PhotoCount равным этому количеству
+                        AppSettings.PhotoCount = AppSettings.PhotoPositions.Count;
+                        System.Diagnostics.Debug.WriteLine($"Количество фотографий обновлено до {AppSettings.PhotoCount} в соответствии с количеством позиций");
+                    }
+                    else
+                    {
+                        // Иначе пересоздаем позиции по умолчанию
+                        InitializeDefaultPhotoPositions();
+                    }
+                }
+                
                 // Заполняем интерфейс настроек загруженными значениями
                 RefreshCameraList();
                 
-                cbRotation.SelectedValue = AppSettings.RotationMode;
+                // Устанавливаем режим поворота
+                bool rotationFound = false;
+                if (!string.IsNullOrEmpty(AppSettings.RotationMode))
+                {
+                    foreach (ComboBoxItem item in cbRotation.Items)
+                    {
+                        if (item.Content.ToString() == AppSettings.RotationMode)
+                        {
+                            cbRotation.SelectedItem = item;
+                            rotationFound = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!rotationFound)
+                {
+                    cbRotation.SelectedIndex = 0;
+                    AppSettings.RotationMode = ((ComboBoxItem)cbRotation.SelectedItem).Content.ToString();
+                }
+                
                 chkMirrorMode.IsChecked = AppSettings.MirrorMode;
                 
-                cbPhotoCount.SelectedValue = AppSettings.PhotoCount.ToString();
-                cbPhotoCountdownTime.SelectedValue = AppSettings.PhotoCountdownTime.ToString();
+                // Устанавливаем количество фотографий
+                bool photoCountFound = false;
+                string photoCount = AppSettings.PhotoCount.ToString();
+                foreach (ComboBoxItem item in cbPhotoCount.Items)
+                {
+                    if (item.Content.ToString() == photoCount)
+                    {
+                        cbPhotoCount.SelectedItem = item;
+                        photoCountFound = true;
+                        break;
+                    }
+                }
+                
+                if (!photoCountFound)
+                {
+                    // Если не найдено подходящее значение, устанавливаем по умолчанию
+                    cbPhotoCount.SelectedIndex = 3; // 4 фотографии
+                    AppSettings.PhotoCount = 4;
+                }
+                
+                // Устанавливаем время отсчета для фото
+                bool photoCountdownFound = false;
+                string photoCountdownTime = AppSettings.PhotoCountdownTime.ToString();
+                foreach (ComboBoxItem item in cbPhotoCountdownTime.Items)
+                {
+                    if (item.Content.ToString() == photoCountdownTime)
+                    {
+                        cbPhotoCountdownTime.SelectedItem = item;
+                        photoCountdownFound = true;
+                        break;
+                    }
+                }
+                
+                if (!photoCountdownFound)
+                {
+                    cbPhotoCountdownTime.SelectedIndex = 0;
+                    AppSettings.PhotoCountdownTime = int.Parse(((ComboBoxItem)cbPhotoCountdownTime.SelectedItem).Content.ToString());
+                }
                 
                 txtFrameTemplatePath.Text = AppSettings.FrameTemplatePath;
                 
-                cbRecordingDuration.SelectedValue = AppSettings.RecordingDuration.ToString();
-                cbVideoCountdownTime.SelectedValue = AppSettings.VideoCountdownTime.ToString();
+                // Обрабатываем настройки видео
+                bool recordingDurationFound = false;
+                string recordingDuration = AppSettings.RecordingDuration.ToString();
+                foreach (ComboBoxItem item in cbRecordingDuration.Items)
+                {
+                    if (item.Content.ToString() == recordingDuration)
+                    {
+                        cbRecordingDuration.SelectedItem = item;
+                        recordingDurationFound = true;
+                        break;
+                    }
+                }
+                
+                if (!recordingDurationFound)
+                {
+                    cbRecordingDuration.SelectedIndex = 1; // 15 секунд
+                    AppSettings.RecordingDuration = 15;
+                }
+                
+                bool videoCountdownFound = false;
+                string videoCountdownTime = AppSettings.VideoCountdownTime.ToString();
+                foreach (ComboBoxItem item in cbVideoCountdownTime.Items)
+                {
+                    if (item.Content.ToString() == videoCountdownTime)
+                    {
+                        cbVideoCountdownTime.SelectedItem = item;
+                        videoCountdownFound = true;
+                        break;
+                    }
+                }
+                
+                if (!videoCountdownFound)
+                {
+                    cbVideoCountdownTime.SelectedIndex = 0; // 3 секунды
+                    AppSettings.VideoCountdownTime = 3;
+                }
                 
                 RefreshPrinterList();
                 if (!string.IsNullOrEmpty(AppSettings.SelectedPrinter))
