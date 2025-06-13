@@ -116,6 +116,10 @@ namespace UnifiedPhotoBooth
                     return;
                 }
                 
+                // Устанавливаем максимально возможное разрешение камеры
+                _capture.Set(VideoCaptureProperties.FrameWidth, 1920);
+                _capture.Set(VideoCaptureProperties.FrameHeight, 1080);
+                
                 _previewRunning = true;
                 _previewTimer.Start();
                 
@@ -173,9 +177,61 @@ namespace UnifiedPhotoBooth
         {
             if (frame == null)
                 return null;
-            
-            // Всегда просто клонируем кадр без какой-либо обработки
-            return frame.Clone();
+
+            // Целевые размеры
+            int targetWidth = 1800;
+            int targetHeight = 1200;
+            double targetRatio = (double)targetWidth / targetHeight; // 1.5 для 6:4
+
+            // Получаем текущие размеры
+            int currentWidth = frame.Width;
+            int currentHeight = frame.Height;
+            double currentRatio = (double)currentWidth / currentHeight;
+
+            // Создаем новое изображение для результата
+            Mat result;
+
+            // Определяем, как нужно обрезать изображение
+            if (currentRatio > targetRatio) 
+            {
+                // Изображение шире, чем нужно - обрезаем по бокам
+                int newWidth = (int)(currentHeight * targetRatio);
+                int x = (currentWidth - newWidth) / 2;
+                
+                // Вырезаем центральную часть с нужным соотношением сторон
+                var roi = new Rect(x, 0, newWidth, currentHeight);
+                var cropped = new Mat(frame, roi);
+                
+                // Изменяем размер до целевого
+                result = new Mat();
+                Cv2.Resize(cropped, result, new OpenCvSharp.Size(targetWidth, targetHeight));
+                
+                cropped.Dispose();
+            }
+            else if (currentRatio < targetRatio)
+            {
+                // Изображение выше, чем нужно - обрезаем сверху и снизу
+                int newHeight = (int)(currentWidth / targetRatio);
+                int y = (currentHeight - newHeight) / 2;
+                
+                // Вырезаем центральную часть с нужным соотношением сторон
+                var roi = new Rect(0, y, currentWidth, newHeight);
+                var cropped = new Mat(frame, roi);
+                
+                // Изменяем размер до целевого
+                result = new Mat();
+                Cv2.Resize(cropped, result, new OpenCvSharp.Size(targetWidth, targetHeight));
+                
+                cropped.Dispose();
+            }
+            else
+            {
+                // Соотношение сторон уже правильное, просто изменяем размер
+                result = new Mat();
+                Cv2.Resize(frame, result, new OpenCvSharp.Size(targetWidth, targetHeight));
+            }
+
+            return result;
         }
         
         private void ApplyRotation(Mat frame)
@@ -270,9 +326,11 @@ namespace UnifiedPhotoBooth
                         Cv2.Flip(frame, frame, FlipMode.Y);
                     }
                     
-                    // Просто клонируем кадр без обработки
-                    var photo = frame.Clone();
-                    _capturedPhotos.Add(photo);
+                    // Обрабатываем фото в соответствии с настройками
+                    Mat processedFrame = AdjustAspectRatioByMode(frame, 1200.0 / 1800.0, SettingsWindow.AppSettings.PhotoProcessingMode);
+                    
+                    // Добавляем обработанное фото в список
+                    _capturedPhotos.Add(processedFrame);
                     
                     ShowStatus($"Фото {_currentPhotoIndex + 1} из {SettingsWindow.AppSettings.PhotoCount}", "Фотография сделана!");
                     
@@ -293,29 +351,20 @@ namespace UnifiedPhotoBooth
                     }
                     else
                     {
-                        // Все фотографии сделаны, создаем коллаж
-                        ShowStatus("Создание коллажа", "Пожалуйста, подождите...");
-                        
-                        Task.Run(() => 
+                        // Все фотографии сделаны, переходим к их обработке
+                        Task.Delay(1000).ContinueWith(t =>
                         {
-                            var finalImage = CreateCollage();
-                            
-                            Dispatcher.Invoke(() => 
+                            Dispatcher.Invoke(() =>
                             {
-                                // Показываем результат
-                                imgPreview.Visibility = Visibility.Collapsed;
-                                imgResult.Source = BitmapSourceConverter.ToBitmapSource(finalImage);
-                                imgResult.Visibility = Visibility.Visible;
-                                
-                                ShowStatus("Коллаж готов", "Ваши фотографии готовы!");
-                                
-                                // Обновляем кнопки
-                                btnReset.Visibility = Visibility.Visible;
-                                UpdateShareButtonVisibility();
-                                btnPrint.Visibility = Visibility.Visible;
+                                ShowStatus("Обработка фотографий", "Пожалуйста, подождите...");
+                                ProcessPhotos();
                             });
                         });
                     }
+                }
+                else
+                {
+                    ShowError("Не удалось сделать фотографию. Проверьте камеру.");
                 }
             }
         }
@@ -422,39 +471,59 @@ namespace UnifiedPhotoBooth
         
         private void BtnPrint_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrEmpty(_finalImagePath) || !File.Exists(_finalImagePath))
-            {
-                ShowError("Файл коллажа не найден.");
-                return;
-            }
-            
             try
             {
-                // Проверяем, есть ли выбранный принтер в настройках
-                if (string.IsNullOrEmpty(SettingsWindow.AppSettings.PrinterName))
+                if (_finalImagePath == null || !File.Exists(_finalImagePath))
                 {
-                    System.Windows.Controls.PrintDialog printDialog = new System.Windows.Controls.PrintDialog();
-                    if (printDialog.ShowDialog() == true)
-                    {
-                        // Создаем и настраиваем изображение для печати с учетом выбранного режима обработки
-                        PrintImage(printDialog, _finalImagePath);
-                    }
+                    MessageBox.Show("Нет изображения для печати.", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                // Создаем окно печати с расширенными настройками
+                System.Windows.Controls.PrintDialog printDialog = new System.Windows.Controls.PrintDialog();
+                
+                // Настраиваем параметры печати
+                printDialog.PageRangeSelection = PageRangeSelection.AllPages;
+                printDialog.UserPageRangeEnabled = true;
+                
+                // Определяем, нужно ли изображение подогнать под размер кадра
+                bool fitToFrame = MessageBox.Show("Растянуть изображение по размеру кадра? (Да - растянуть, Нет - сохранить пропорции)", 
+                    "Настройка печати", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+                
+                // Создаем изображение для печати
+                BitmapImage bitmapImage = new BitmapImage(new Uri(_finalImagePath, UriKind.Absolute));
+                System.Windows.Controls.Image printImage = new System.Windows.Controls.Image();
+                printImage.Source = bitmapImage;
+                
+                // Настраиваем параметры печати в зависимости от выбора пользователя
+                if (fitToFrame)
+                {
+                    // Растягиваем изображение на всю страницу
+                    printImage.Stretch = Stretch.Fill;
                 }
                 else
                 {
-                    // Используем выбранный принтер
-                    System.Windows.Controls.PrintDialog printDialog = new System.Windows.Controls.PrintDialog();
-                    printDialog.PrintQueue = new System.Printing.PrintQueue(new System.Printing.PrintServer(), SettingsWindow.AppSettings.PrinterName);
-                    
-                    // Создаем и настраиваем изображение для печати с учетом выбранного режима обработки
-                    PrintImage(printDialog, _finalImagePath);
-                    
+                    // Сохраняем пропорции
+                    printImage.Stretch = Stretch.Uniform;
+                }
+                
+                // Настраиваем размер печати для формата 4x6
+                printDialog.PrintTicket.PageMediaSize = new System.Printing.PageMediaSize(
+                    4 * 96.0, // 4 дюйма в пикселях
+                    6 * 96.0  // 6 дюймов в пикселях
+                );
+                
+                // Показываем диалог печати
+                if (printDialog.ShowDialog() == true)
+                {
+                    // Печатаем изображение
+                    printDialog.PrintVisual(printImage, "Печать фотографии");
                     ShowStatus("Печать", "Задание отправлено на печать");
                 }
             }
             catch (Exception ex)
             {
-                ShowError($"Ошибка при печати: {ex.Message}");
+                MessageBox.Show($"Ошибка при печати: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         
@@ -941,6 +1010,24 @@ namespace UnifiedPhotoBooth
                     lineType: LineTypes.AntiAlias
                 );
             }
+        }
+        
+        private void ProcessPhotos()
+        {
+            // Создаем коллаж из обработанных фотографий
+            var finalImage = CreateCollage();
+            
+            // Показываем результат
+            imgPreview.Visibility = Visibility.Collapsed;
+            imgResult.Source = BitmapSourceConverter.ToBitmapSource(finalImage);
+            imgResult.Visibility = Visibility.Visible;
+            
+            ShowStatus("Коллаж готов", "Ваши фотографии готовы!");
+            
+            // Обновляем кнопки
+            btnReset.Visibility = Visibility.Visible;
+            UpdateShareButtonVisibility();
+            btnPrint.Visibility = Visibility.Visible;
         }
     }
 } 

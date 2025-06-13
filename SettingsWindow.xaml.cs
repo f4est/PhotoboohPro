@@ -17,6 +17,7 @@ using System.Reflection;
 using System.ComponentModel;
 using Microsoft.Win32;
 using System.Windows.Controls.Primitives;
+using System.Printing;
 
 namespace UnifiedPhotoBooth
 {
@@ -101,6 +102,10 @@ namespace UnifiedPhotoBooth
         public SettingsWindow()
         {
             InitializeComponent();
+            
+            // Устанавливаем окно поверх всех окон
+            this.Topmost = true;
+            this.Owner = Application.Current.MainWindow;
             
             // Загружаем настройки при старте, если они есть
             LoadSettings();
@@ -2810,6 +2815,108 @@ namespace UnifiedPhotoBooth
             {
                 System.Diagnostics.Debug.WriteLine($"Ошибка при загрузке настроек: {ex.Message}");
                 AppSettings = new AppSettings();
+            }
+        }
+
+        private void BtnPrinterSettings_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var printDialog = new PrintDialog();
+                printDialog.PageRangeSelection = PageRangeSelection.AllPages;
+                printDialog.UserPageRangeEnabled = true;
+                printDialog.MaxPage = 1;
+                printDialog.MinPage = 1;
+                
+                // Устанавливаем размер страницы
+                printDialog.PrintTicket.PageMediaSize = new System.Printing.PageMediaSize(
+                    System.Printing.PageMediaSizeName.ISOA4);
+                
+                if (printDialog.ShowDialog() == true)
+                {
+                    // Сохраняем настройки принтера
+                    AppSettings.SelectedPrinter = printDialog.PrintQueue.FullName;
+                    AppSettings.PrintWidth = printDialog.PrintableAreaWidth;
+                    AppSettings.PrintHeight = printDialog.PrintableAreaHeight;
+                    
+                    // Обновляем UI
+                    cbPrinters.SelectedItem = AppSettings.SelectedPrinter;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при настройке принтера: {ex.Message}", "Ошибка", 
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void InitializePrintSettings()
+        {
+            // Заполняем список принтеров
+            RefreshPrinterList();
+            
+            // Устанавливаем выбранный принтер
+            if (!string.IsNullOrEmpty(AppSettings.SelectedPrinter))
+            {
+                foreach (ComboBoxItem item in cbPrinters.Items)
+                {
+                    if (item.Content.ToString() == AppSettings.SelectedPrinter)
+                    {
+                        cbPrinters.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+            
+            // Устанавливаем размеры печати
+            txtPrintWidth.Text = AppSettings.PrintWidth.ToString();
+            txtPrintHeight.Text = AppSettings.PrintHeight.ToString();
+            
+            // Устанавливаем режим обработки изображения
+            foreach (ComboBoxItem item in cbPrintProcessingMode.Items)
+            {
+                if (item.Content.ToString() == AppSettings.PrintProcessingMode.ToString())
+                {
+                    cbPrintProcessingMode.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+
+        private void BtnTestPrint_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(AppSettings.SelectedPrinter))
+                {
+                    MessageBox.Show("Пожалуйста, выберите принтер", "Предупреждение", 
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                var printDialog = new PrintDialog();
+                printDialog.PrintQueue = new PrintQueue(new PrintServer(), AppSettings.SelectedPrinter);
+                
+                // Создаем тестовое изображение
+                var testImage = new System.Windows.Controls.Image();
+                testImage.Source = new BitmapImage(new Uri("pack://application:,,,/Resources/test_print.png"));
+                
+                // Настраиваем размеры печати
+                printDialog.PrintTicket.PageMediaSize = new PageMediaSize(
+                    AppSettings.PrintWidth * 96, // Конвертируем сантиметры в пиксели
+                    AppSettings.PrintHeight * 96);
+                
+                if (printDialog.ShowDialog() == true)
+                {
+                    printDialog.PrintVisual(testImage, "Тестовая печать");
+                    MessageBox.Show("Тестовая печать отправлена на принтер", "Успех", 
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при тестовой печати: {ex.Message}", "Ошибка", 
+                    MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }

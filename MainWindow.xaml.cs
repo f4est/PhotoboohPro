@@ -14,6 +14,7 @@ using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.IO;
 using OpenCvSharp;
+using System.Runtime.InteropServices;
 
 namespace UnifiedPhotoBooth
 {
@@ -201,30 +202,32 @@ namespace UnifiedPhotoBooth
             _windowNormalHeight = Height;
             _windowNormalLeft = Left;
             _windowNormalTop = Top;
-            
-            // Меняем стиль окна для полноэкранного режима
+
+            // Скрываем панель задач
+            var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            var taskbar = FindWindow("Shell_TrayWnd", null);
+            ShowWindow(taskbar, 0); // SW_HIDE
+
+            // Устанавливаем полноэкранный режим
             WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.NoResize;
-            
-            // Разворачиваем на весь экран
             WindowState = WindowState.Maximized;
+            Topmost = true;
         }
         
         private void ExitFullscreenMode()
         {
-            // Восстанавливаем стиль окна
+            // Показываем панель задач
+            var taskbar = FindWindow("Shell_TrayWnd", null);
+            ShowWindow(taskbar, 1); // SW_SHOW
+
+            // Восстанавливаем предыдущее состояние
             WindowStyle = WindowStyle.SingleBorderWindow;
-            ResizeMode = ResizeMode.CanResize;
-            
-            // Восстанавливаем размер и положение
             WindowState = _previousWindowState;
-            if (_previousWindowState == WindowState.Normal)
-            {
-                Width = _windowNormalWidth;
-                Height = _windowNormalHeight;
-                Left = _windowNormalLeft;
-                Top = _windowNormalTop;
-            }
+            Width = _windowNormalWidth;
+            Height = _windowNormalHeight;
+            Left = _windowNormalLeft;
+            Top = _windowNormalTop;
+            Topmost = false;
         }
         
         private void UpdateFullscreenButtonIcon()
@@ -263,6 +266,12 @@ namespace UnifiedPhotoBooth
                 e.Handled = true;
             }
         }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr FindWindow(string className, string windowName);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     }
     
     public class InputDialog : System.Windows.Window
